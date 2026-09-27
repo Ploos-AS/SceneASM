@@ -291,6 +291,23 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         let vic = profile.vic_line(raster_line, state)
             .ok_or(AssembleError::InvalidRasterLine { source_line, raster_line })?;
         let schedule = vic.bus.schedule(&instructions[start..end]);
+        for scheduled in &schedule.instructions {
+            if scheduled.stalled_cycles > 0 {
+                diagnostics.push(
+                    diagnostic::Diagnostic::error(
+                        "C64_VIC_STALL",
+                        "VIC-II bus activity stretches instruction timing",
+                    )
+                    .with_primary(scheduled.source.clone(), "instruction stalls on VIC-II bus ownership")
+                    .with_timing(diagnostic::TimingDiagnostic {
+                        raster_line,
+                        nominal_cycles: scheduled.nominal_cycles,
+                        stalled_cycles: scheduled.stalled_cycles,
+                        actual_cycles: scheduled.end_cycle - scheduled.start_cycle,
+                    }),
+                );
+            }
+        }
         let contract = c64::RasterContract {
             line: raster_line,
             scheduled_end_cycle: schedule.end_cycle,
@@ -329,7 +346,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         }
     }
 
-    Ok(Assembly { bytes, symbols, origin, instructions, cycles, cycle_range, raster_contracts, source_map })
+    Ok(Assembly { bytes, symbols, origin, instructions, cycles, cycle_range, raster_contracts, source_map, diagnostics })
 }
 
 fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
@@ -347,6 +364,17 @@ fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vic_stalls_emit_structured_source_diagnostics() {
+        let mut source = ".vic_display on\n.vic_yscroll 0\n.raster 48 {\n".to_string();
+        for _ in 0..8 { source.push_str("nop\n"); }
+        source.push_str("}\n");
+        let out = assemble(&source, Target::c64()).unwrap();
+        let diagnostic = out.diagnostics.iter().find(|d| d.code == "C64_VIC_STALL").unwrap();
+        assert_eq!(diagnostic.timing.as_ref().unwrap().raster_line, 48);
+        assert!(diagnostic.primary.as_ref().unwrap().span.line >= 4);
+    }
 
     #[test]
     fn assembly_registers_main_source() {
