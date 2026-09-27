@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 pub mod opcodes;
+pub mod layout;
 pub use opcodes::{
     opcode, opcode_by_byte, opcode_with_policy, AddressingMode, ExtraCycle, Opcode, OpcodeClass,
     UndocumentedPolicy, OPCODES, UNDOCUMENTED_OPCODES,
@@ -38,6 +39,10 @@ pub enum AssembleError {
     InvalidNumber { line: usize, text: String },
     #[error("duplicate symbol on line {line}: {name}")]
     DuplicateSymbol { line: usize, name: String },
+    #[error("unresolved symbol on line {line}: {name}")]
+    UnresolvedSymbol { line: usize, name: String },
+    #[error("layout did not converge")]
+    LayoutDidNotConverge,
 }
 
 pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError> {
@@ -45,10 +50,11 @@ pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError>
 }
 
 pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_policy: UndocumentedPolicy) -> Result<Assembly, AssembleError> {
-    let mut origin = target.origin;
+    let resolved = layout::layout(source, target.origin, undocumented_policy)?;
+    let mut origin = resolved.origin;
     let mut pc = origin;
     let mut bytes = Vec::new();
-    let mut symbols = BTreeMap::new();
+    let symbols = resolved.symbols;
     let mut instructions = Vec::new();
     let mut cycles = 0u64;
 
@@ -62,11 +68,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             if bytes.is_empty() { origin = value; pc = value; continue; }
         }
 
-        if let Some(label) = line.strip_suffix(':') {
-            let name = label.trim().to_string();
-            if symbols.insert(name.clone(), pc).is_some() {
-                return Err(AssembleError::DuplicateSymbol { line: line_no, name });
-            }
+        if line.ends_with(':') {
             continue;
         }
 
@@ -99,15 +101,10 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             (upper.as_str(), None)
         };
 
-        let (mode, operand_value) = match operand {
-            None => (AddressingMode::Implied, None),
-            Some(arg) if arg.starts_with('#') => (AddressingMode::Immediate, Some(parse_u16(arg.trim_start_matches('#').trim(), line_no)?)),
-            Some(arg) => {
-                let value = parse_u16(arg, line_no)?;
-                let zp = value <= 0xff && opcode_with_policy(mnemonic, AddressingMode::ZeroPage, undocumented_policy).is_some();
-                (if zp { AddressingMode::ZeroPage } else { AddressingMode::Absolute }, Some(value))
-            }
-        };
+        let (mode, operand_value) = layout::choose_mode(mnemonic, operand, &symbols, undocumented_policy, line_no)?;
+        if operand.is_some() && operand_value.is_none() {
+            return Err(AssembleError::UnresolvedSymbol { line: line_no, name: operand.unwrap().trim_start_matches('#').trim().to_string() });
+        }
 
         let opcode = opcode_with_policy(mnemonic, mode, undocumented_policy)
             .ok_or_else(|| AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() })?;
@@ -182,5 +179,12 @@ mod tests {
     fn undocumented_policy_can_be_selected_in_source() {
         let denied = assemble("lax ($20,x)\n", Target::c64());
         assert!(denied.is_err());
+    }
+
+    #[test]
+    fn forward_reference_can_shrink_to_zero_page() {
+        let out = assemble(".org $0020\nlda table\nnop\ntable:\n.byte 1\n", Target::c64()).unwrap();
+        assert_eq!(out.symbols["table"], 0x0023);
+        assert_eq!(out.bytes, vec![0xa5, 0x23, 0xea, 0x01]);
     }
 }
