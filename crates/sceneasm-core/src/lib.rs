@@ -72,6 +72,8 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
     let symbols = resolved.symbols;
     let mut instructions = Vec::new();
     let mut cycles = 0u64;
+    let mut raster_blocks: Vec<(usize, u16, usize)> = Vec::new();
+    let mut open_raster: Option<(usize, u16, usize)> = None;
 
     for (index, raw) in source.lines().enumerate() {
         let line_no = index + 1;
@@ -81,6 +83,21 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         if let Some(rest) = line.strip_prefix(".org") {
             let value = parse_u16(rest.trim(), line_no)?;
             if bytes.is_empty() { origin = value; pc = value; continue; }
+        }
+
+        if line == "}" {
+            if let Some(block) = open_raster.take() { raster_blocks.push(block); }
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix(".raster") {
+            if line.ends_with('{') {
+                let expression = rest.trim_end_matches('{').trim();
+                let raster_line = expr::eval(expression, &symbols, line_no)?
+                    .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: expression.to_string() })?;
+                open_raster = Some((line_no, raster_line, instructions.len()));
+                continue;
+            }
         }
 
         if line.ends_with(':') || (!line.starts_with('.') && line.contains('=')) {
@@ -161,29 +178,27 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         instructions.push(InstructionInfo { address, opcode });
     }
 
+    if let Some(block) = open_raster.take() { raster_blocks.push(block); }
     let cycle_range = timing::analyze(&instructions);
     let mut raster_contracts = Vec::new();
+    for (source_line, raster_line, start) in raster_blocks {
+        let range = timing::analyze(&instructions[start..]);
+        let profile = c64::C64Timing::pal();
+        let budget = profile.line_budget(raster_line)
+            .ok_or(AssembleError::InvalidRasterLine { source_line, raster_line })?;
+        let contract = c64::RasterContract {
+            line: raster_line, available_cycles: budget, min_cycles: range.min, max_cycles: range.max,
+        };
+        if !contract.fits() {
+            return Err(AssembleError::RasterBudgetExceeded {
+                source_line, raster_line, actual: range.max, budget,
+            });
+        }
+        raster_contracts.push(contract);
+    }
     for (index, raw) in source.lines().enumerate() {
         let line = raw.split(';').next().unwrap_or("").trim();
-        if let Some(rest) = line.strip_prefix(".raster") {
-            let raster_line = expr::eval(rest.trim(), &symbols, index + 1)?
-                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: index + 1, name: rest.trim().to_string() })?;
-            let profile = c64::C64Timing::pal();
-            let budget = profile.line_budget(raster_line)
-                .ok_or(AssembleError::InvalidRasterLine { source_line: index + 1, raster_line })?;
-            let contract = c64::RasterContract {
-                line: raster_line,
-                available_cycles: budget,
-                min_cycles: cycle_range.min,
-                max_cycles: cycle_range.max,
-            };
-            if !contract.fits() {
-                return Err(AssembleError::RasterBudgetExceeded {
-                    source_line: index + 1, raster_line, actual: cycle_range.max, budget,
-                });
-            }
-            raster_contracts.push(contract);
-        }
+        if line.starts_with(".raster") { continue; }
         if let Some(rest) = line.strip_prefix(".assert_cycles") {
             let rest = rest.trim();
             let budget_text = rest.strip_prefix("<=").map(str::trim)
@@ -249,9 +264,11 @@ mod tests {
 
     #[test]
     fn pal_raster_contract_uses_machine_line_budget() {
-        let out = assemble("sei\nnop\nrts\n.raster 100\n", Target::c64()).unwrap();
+        let out = assemble("sei\n.raster 100 {\nnop\nrts\n}\n", Target::c64()).unwrap();
         assert_eq!(out.raster_contracts.len(), 1);
         assert_eq!(out.raster_contracts[0].available_cycles, 63);
+        assert_eq!(out.raster_contracts[0].min_cycles, 8);
+        assert_eq!(out.raster_contracts[0].max_cycles, 8);
         assert!(out.raster_contracts[0].fits());
     }
 
