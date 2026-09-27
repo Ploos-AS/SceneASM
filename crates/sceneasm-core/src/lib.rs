@@ -6,6 +6,7 @@ pub mod opcodes;
 pub mod layout;
 pub mod expr;
 pub mod timing;
+pub mod c64;
 pub use opcodes::{
     opcode, opcode_by_byte, opcode_with_policy, AddressingMode, ExtraCycle, Opcode, OpcodeClass,
     UndocumentedPolicy, OPCODES, UNDOCUMENTED_OPCODES,
@@ -32,6 +33,7 @@ pub struct Assembly {
     pub instructions: Vec<InstructionInfo>,
     pub cycles: u64,
     pub cycle_range: timing::CycleRange,
+    pub raster_contracts: Vec<c64::RasterContract>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -52,6 +54,10 @@ pub enum AssembleError {
     AssertionFailed { line: usize, expression: String },
     #[error("cycle budget exceeded on line {line}: worst case {actual} > budget {budget}")]
     CycleBudgetExceeded { line: usize, actual: u64, budget: u64 },
+    #[error("invalid raster line on source line {source_line}: {raster_line}")]
+    InvalidRasterLine { source_line: usize, raster_line: u16 },
+    #[error("raster budget exceeded on source line {source_line}: raster {raster_line}, worst case {actual} > {budget}")]
+    RasterBudgetExceeded { source_line: usize, raster_line: u16, actual: u64, budget: u16 },
 }
 
 pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError> {
@@ -91,7 +97,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             continue;
         }
 
-        if line.starts_with(".assert_cycles") {
+        if line.starts_with(".assert_cycles") || line.starts_with(".raster") {
             continue;
         }
 
@@ -156,8 +162,28 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
     }
 
     let cycle_range = timing::analyze(&instructions);
+    let mut raster_contracts = Vec::new();
     for (index, raw) in source.lines().enumerate() {
         let line = raw.split(';').next().unwrap_or("").trim();
+        if let Some(rest) = line.strip_prefix(".raster") {
+            let raster_line = expr::eval(rest.trim(), &symbols, index + 1)?
+                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: index + 1, name: rest.trim().to_string() })?;
+            let profile = c64::C64Timing::pal();
+            let budget = profile.line_budget(raster_line)
+                .ok_or(AssembleError::InvalidRasterLine { source_line: index + 1, raster_line })?;
+            let contract = c64::RasterContract {
+                line: raster_line,
+                available_cycles: budget,
+                min_cycles: cycle_range.min,
+                max_cycles: cycle_range.max,
+            };
+            if !contract.fits() {
+                return Err(AssembleError::RasterBudgetExceeded {
+                    source_line: index + 1, raster_line, actual: cycle_range.max, budget,
+                });
+            }
+            raster_contracts.push(contract);
+        }
         if let Some(rest) = line.strip_prefix(".assert_cycles") {
             let rest = rest.trim();
             let budget_text = rest.strip_prefix("<=").map(str::trim)
@@ -170,7 +196,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         }
     }
 
-    Ok(Assembly { bytes, symbols, origin, instructions, cycles, cycle_range })
+    Ok(Assembly { bytes, symbols, origin, instructions, cycles, cycle_range, raster_contracts })
 }
 
 fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
@@ -219,6 +245,14 @@ mod tests {
     fn undocumented_policy_can_be_selected_in_source() {
         let denied = assemble("lax ($20,x)\n", Target::c64());
         assert!(denied.is_err());
+    }
+
+    #[test]
+    fn pal_raster_contract_uses_machine_line_budget() {
+        let out = assemble("sei\nnop\nrts\n.raster 100\n", Target::c64()).unwrap();
+        assert_eq!(out.raster_contracts.len(), 1);
+        assert_eq!(out.raster_contracts[0].available_cycles, 63);
+        assert!(out.raster_contracts[0].fits());
     }
 
     #[test]
