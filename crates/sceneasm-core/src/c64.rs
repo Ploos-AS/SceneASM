@@ -208,6 +208,8 @@ impl C64Timing {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RasterContract {
     pub line: u16,
+    pub scheduled_end_cycle: u16,
+    pub scheduled_stall_cycles: u16,
     pub line_cycles: u16,
     pub available_cycles: u16,
     pub vic_stolen_cycles: u16,
