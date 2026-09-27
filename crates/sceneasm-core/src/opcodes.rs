@@ -73,11 +73,20 @@ pub const OPCODES: &[Opcode] = &[
     op!("LDA",IndirectIndexed,0xb1,2,5,PageCross), op!("LDY",ZeroPageX,0xb4,2,4), op!("LDA",ZeroPageX,0xb5,2,4),
     op!("LDX",ZeroPageY,0xb6,2,4), op!("CLV",Implied,0xb8,1,2), op!("LDA",AbsoluteY,0xb9,3,4,PageCross),
     op!("TSX",Implied,0xba,1,2), op!("LDY",AbsoluteX,0xbc,3,4,PageCross), op!("LDA",AbsoluteX,0xbd,3,4,PageCross),
-    op!("LDX",AbsoluteY,0xbe,3,4,PageCross), op!("CPY",Immediate,0xc0,2,2), op!("CMP",Immediate,0xc9,2,2),
-    op!("INY",Implied,0xc8,1,2), op!("DEX",Implied,0xca,1,2), op!("BNE",Relative,0xd0,2,2,BranchTakenAndPageCross),
-    op!("CLD",Implied,0xd8,1,2), op!("CPX",Immediate,0xe0,2,2), op!("SBC",Immediate,0xe9,2,2),
-    op!("INX",Implied,0xe8,1,2), op!("NOP",Implied,0xea,1,2), op!("BEQ",Relative,0xf0,2,2,BranchTakenAndPageCross),
-    op!("SED",Implied,0xf8,1,2),
+    op!("LDX",AbsoluteY,0xbe,3,4,PageCross), op!("CPY",Immediate,0xc0,2,2), op!("CMP",IndexedIndirect,0xc1,2,6),
+    op!("CPY",ZeroPage,0xc4,2,3), op!("CMP",ZeroPage,0xc5,2,3), op!("DEC",ZeroPage,0xc6,2,5),
+    op!("INY",Implied,0xc8,1,2), op!("CMP",Immediate,0xc9,2,2), op!("DEX",Implied,0xca,1,2),
+    op!("CPY",Absolute,0xcc,3,4), op!("CMP",Absolute,0xcd,3,4), op!("DEC",Absolute,0xce,3,6),
+    op!("BNE",Relative,0xd0,2,2,BranchTakenAndPageCross), op!("CMP",IndirectIndexed,0xd1,2,5,PageCross),
+    op!("CMP",ZeroPageX,0xd5,2,4), op!("DEC",ZeroPageX,0xd6,2,6), op!("CLD",Implied,0xd8,1,2),
+    op!("CMP",AbsoluteY,0xd9,3,4,PageCross), op!("CMP",AbsoluteX,0xdd,3,4,PageCross), op!("DEC",AbsoluteX,0xde,3,7),
+    op!("CPX",Immediate,0xe0,2,2), op!("SBC",IndexedIndirect,0xe1,2,6), op!("CPX",ZeroPage,0xe4,2,3),
+    op!("SBC",ZeroPage,0xe5,2,3), op!("INC",ZeroPage,0xe6,2,5), op!("INX",Implied,0xe8,1,2),
+    op!("SBC",Immediate,0xe9,2,2), op!("NOP",Implied,0xea,1,2), op!("CPX",Absolute,0xec,3,4),
+    op!("SBC",Absolute,0xed,3,4), op!("INC",Absolute,0xee,3,6), op!("BEQ",Relative,0xf0,2,2,BranchTakenAndPageCross),
+    op!("SBC",IndirectIndexed,0xf1,2,5,PageCross), op!("SBC",ZeroPageX,0xf5,2,4), op!("INC",ZeroPageX,0xf6,2,6),
+    op!("SED",Implied,0xf8,1,2), op!("SBC",AbsoluteY,0xf9,3,4,PageCross), op!("SBC",AbsoluteX,0xfd,3,4,PageCross),
+    op!("INC",AbsoluteX,0xfe,3,7),
 ];
 
 pub fn opcode(mnemonic: &str, mode: AddressingMode) -> Option<Opcode> {
@@ -104,6 +113,30 @@ mod tests {
         let bne = opcode("BNE", AddressingMode::Relative).unwrap();
         assert_eq!(bne.cycles, 2);
         assert_eq!(bne.extra_cycle, ExtraCycle::BranchTakenAndPageCross);
+    }
+
+    #[test]
+    fn documented_table_has_no_duplicate_bytes() {
+        let mut seen = [false; 256];
+        for op in OPCODES {
+            assert!(!seen[op.code as usize], "duplicate opcode byte {:02x}", op.code);
+            seen[op.code as usize] = true;
+        }
+    }
+
+    #[test]
+    fn opcode_lengths_match_addressing_modes() {
+        for op in OPCODES {
+            let expected = match op.mode {
+                AddressingMode::Implied | AddressingMode::Accumulator => 1,
+                AddressingMode::Immediate | AddressingMode::ZeroPage | AddressingMode::ZeroPageX |
+                AddressingMode::ZeroPageY | AddressingMode::Relative | AddressingMode::IndexedIndirect |
+                AddressingMode::IndirectIndexed => 2,
+                AddressingMode::Absolute | AddressingMode::AbsoluteX | AddressingMode::AbsoluteY |
+                AddressingMode::Indirect => 3,
+            };
+            assert_eq!(op.bytes, expected, "bad length for {} {:?}", op.mnemonic, op.mode);
+        }
     }
 
     #[test]
