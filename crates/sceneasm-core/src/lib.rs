@@ -270,8 +270,11 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         let profile = c64::C64Timing::pal();
         let vic = profile.vic_line(raster_line, state)
             .ok_or(AssembleError::InvalidRasterLine { source_line, raster_line })?;
+        let schedule = vic.bus.schedule(&instructions[start..end]);
         let contract = c64::RasterContract {
             line: raster_line,
+            scheduled_end_cycle: schedule.end_cycle,
+            scheduled_stall_cycles: schedule.stalled_cycles,
             line_cycles: profile.cycles_per_line,
             available_cycles: vic.cpu_available_cycles,
             vic_stolen_cycles: vic.vic_stolen_cycles,
@@ -394,6 +397,21 @@ mod tests {
         assert_eq!(contract.vic_stolen_cycles, 40);
         assert_eq!(contract.available_cycles, 23);
         assert_eq!(contract.margin(), 21);
+        assert_eq!(contract.scheduled_end_cycle, 2);
+        assert_eq!(contract.scheduled_stall_cycles, 0);
+    }
+
+    #[test]
+    fn raster_schedule_reports_vic_stalls() {
+        let source = ".vic_display on\n.vic_yscroll 0\n.raster 48 {\n";
+        let mut owned = source.to_string();
+        for _ in 0..8 { owned.push_str("nop\n"); }
+        owned.push_str("}\n");
+        let out = assemble(&owned, Target::c64()).unwrap();
+        let contract = out.raster_contracts[0];
+        assert!(contract.badline);
+        assert!(contract.scheduled_stall_cycles > 0);
+        assert!(contract.scheduled_end_cycle > contract.min_cycles as u16);
     }
 
     #[test]
