@@ -80,7 +80,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         let line = raw.split(';').next().unwrap_or("").trim();
         if line.is_empty() { continue; }
 
-        if let Some(rest) = line.strip_prefix(".org") {
+        if let Some(rest) = line.strip_prefix("* =").or_else(|| line.strip_prefix(".org")) {
             let value = parse_u16(rest.trim(), line_no)?;
             if bytes.is_empty() { origin = value; pc = value; continue; }
         }
@@ -161,11 +161,20 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         match mode {
             AddressingMode::Implied | AddressingMode::Accumulator => {}
             AddressingMode::Immediate | AddressingMode::ZeroPage | AddressingMode::ZeroPageX |
-            AddressingMode::ZeroPageY | AddressingMode::Relative | AddressingMode::IndexedIndirect |
+            AddressingMode::ZeroPageY | AddressingMode::IndexedIndirect |
             AddressingMode::IndirectIndexed => {
                 let value = operand_value.unwrap();
                 if value > 0xff { return Err(AssembleError::InvalidNumber { line: line_no, text: operand.unwrap().into() }); }
                 bytes.push(value as u8);
+            }
+            AddressingMode::Relative => {
+                let target = operand_value.unwrap();
+                let next = pc.wrapping_add(2);
+                let delta = target as i32 - next as i32;
+                if !(-128..=127).contains(&delta) {
+                    return Err(AssembleError::InvalidNumber { line: line_no, text: operand.unwrap().into() });
+                }
+                bytes.push((delta as i8) as u8);
             }
             AddressingMode::Absolute | AddressingMode::AbsoluteX | AddressingMode::AbsoluteY |
             AddressingMode::Indirect => {
@@ -229,6 +238,16 @@ fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn c64scene_hello_raster_syntax_and_relative_branch() {
+        let src = "* = $0801\n.byte $0c,$08,$0a,$00,$9e,$20,$32,$30,$36,$31,$00,$00,$00\nstart:\nsei\nlda #$00\nsta $d020\nsta $d021\nmain:\nlda $d012\nwait:\ncmp $d012\nbeq wait\nlda $d012\nlsr\nlsr\nand #$0f\nsta $d020\njmp main\n";
+        let out = assemble(src, Target::c64()).unwrap();
+        assert_eq!(out.origin, 0x0801);
+        assert_eq!(out.symbols["start"], 0x080e);
+        assert_eq!(out.bytes[24], 0xf0);
+        assert_eq!(out.bytes[25], 0xfb);
+    }
 
     #[test]
     fn assembles_minimal_c64_code_and_tracks_cycles() {
