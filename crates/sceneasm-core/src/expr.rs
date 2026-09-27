@@ -12,6 +12,10 @@ enum Token {
     RParen,
     Low,
     High,
+    Eq,
+    Ne,
+    Le,
+    Ge,
 }
 
 pub fn eval(text: &str, symbols: &BTreeMap<String, u16>, line: usize) -> Result<Option<u16>, AssembleError> {
@@ -35,6 +39,10 @@ fn lex(text: &str, line: usize) -> Result<Vec<Token>, AssembleError> {
             '-' => { out.push(Token::Minus); i += 1; }
             '(' => { out.push(Token::LParen); i += 1; }
             ')' => { out.push(Token::RParen); i += 1; }
+            '<' if chars.get(i + 1) == Some(&'=') => { out.push(Token::Le); i += 2; }
+            '>' if chars.get(i + 1) == Some(&'=') => { out.push(Token::Ge); i += 2; }
+            '=' if chars.get(i + 1) == Some(&'=') => { out.push(Token::Eq); i += 2; }
+            '!' if chars.get(i + 1) == Some(&'=') => { out.push(Token::Ne); i += 2; }
             '<' => { out.push(Token::Low); i += 1; }
             '>' => { out.push(Token::High); i += 1; }
             '$' => {
@@ -73,6 +81,24 @@ struct Parser<'a> {
 }
 
 impl Parser<'_> {
+    fn comparison(&mut self) -> Result<Option<u16>, AssembleError> {
+        let lhs = self.expr()?;
+        let Some(op) = self.tokens.get(self.pos).cloned() else { return Ok(lhs); };
+        if !matches!(op, Token::Eq | Token::Ne | Token::Le | Token::Ge) { return Ok(lhs); }
+        self.pos += 1;
+        let rhs = self.expr()?;
+        Ok(match (lhs, rhs) {
+            (Some(a), Some(b)) => Some(match op {
+                Token::Eq => (a == b) as u16,
+                Token::Ne => (a != b) as u16,
+                Token::Le => (a <= b) as u16,
+                Token::Ge => (a >= b) as u16,
+                _ => unreachable!(),
+            }),
+            _ => None,
+        })
+    }
+
     fn expr(&mut self) -> Result<Option<u16>, AssembleError> {
         let mut lhs = self.unary()?;
         while let Some(token) = self.tokens.get(self.pos) {
@@ -126,6 +152,8 @@ mod tests {
         assert_eq!(eval(">irq", &symbols, 1).unwrap(), Some(0xc1));
         assert_eq!(eval("table + 8 - 2", &symbols, 1).unwrap(), Some(0x2006));
         assert_eq!(eval("<(irq + 1)", &symbols, 1).unwrap(), Some(0x24));
+        assert_eq!(eval("table >= $2000", &symbols, 1).unwrap(), Some(1));
+        assert_eq!(eval("table == irq", &symbols, 1).unwrap(), Some(0));
     }
 
     #[test]
