@@ -1,0 +1,16 @@
+[package]
+name = "sceneasm"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "sceneasm"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+sceneasm-core = { path = "../sceneasm-core" }
