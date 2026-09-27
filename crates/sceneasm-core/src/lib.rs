@@ -294,7 +294,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         for scheduled in &schedule.instructions {
             if scheduled.stalled_cycles > 0 {
                 diagnostics.push(
-                    diagnostic::Diagnostic::error(
+                    diagnostic::Diagnostic::info(
                         "C64_VIC_STALL",
                         "VIC-II bus activity stretches instruction timing",
                     )
@@ -372,6 +372,7 @@ mod tests {
         source.push_str("}\n");
         let out = assemble(&source, Target::c64()).unwrap();
         let diagnostic = out.diagnostics.iter().find(|d| d.code == "C64_VIC_STALL").unwrap();
+        assert_eq!(diagnostic.severity, diagnostic::Severity::Info);
         assert_eq!(diagnostic.timing.as_ref().unwrap().raster_line, 48);
         assert!(diagnostic.primary.as_ref().unwrap().span.line >= 4);
     }
