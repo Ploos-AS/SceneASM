@@ -41,6 +41,10 @@ pub enum AssembleError {
 }
 
 pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError> {
+    assemble_with_policy(source, target, UndocumentedPolicy::Deny)
+}
+
+pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_policy: UndocumentedPolicy) -> Result<Assembly, AssembleError> {
     let mut origin = target.origin;
     let mut pc = origin;
     let mut bytes = Vec::new();
@@ -66,6 +70,16 @@ pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError>
             continue;
         }
 
+        if let Some(rest) = line.strip_prefix(".undocumented") {
+            undocumented_policy = match rest.trim().to_ascii_lowercase().as_str() {
+                "deny" => UndocumentedPolicy::Deny,
+                "stable" => UndocumentedPolicy::Stable,
+                "all" => UndocumentedPolicy::All,
+                _ => return Err(AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() }),
+            };
+            continue;
+        }
+
         if let Some(rest) = line.strip_prefix(".byte") {
             for token in rest.split(',').map(str::trim).filter(|s| !s.is_empty()) {
                 let value = parse_u16(token, line_no)?;
@@ -79,29 +93,39 @@ pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError>
         }
 
         let upper = line.to_ascii_uppercase();
-        let (mnemonic, mode, operand) = if let Some((m, arg)) = upper.split_once(' ') {
-            let original_arg = line.split_once(' ').map(|(_, a)| a.trim()).unwrap_or("");
-            (m, if arg.trim_start().starts_with('#') { AddressingMode::Immediate } else { AddressingMode::Absolute }, Some(original_arg))
+        let (mnemonic, operand) = if let Some((m, _)) = upper.split_once(' ') {
+            (m, line.split_once(' ').map(|(_, a)| a.trim()))
         } else {
-            (upper.as_str(), AddressingMode::Implied, None)
+            (upper.as_str(), None)
         };
 
-        let opcode = opcode(mnemonic, mode)
+        let (mode, operand_value) = match operand {
+            None => (AddressingMode::Implied, None),
+            Some(arg) if arg.starts_with('#') => (AddressingMode::Immediate, Some(parse_u16(arg.trim_start_matches('#').trim(), line_no)?)),
+            Some(arg) => {
+                let value = parse_u16(arg, line_no)?;
+                let zp = value <= 0xff && opcode_with_policy(mnemonic, AddressingMode::ZeroPage, undocumented_policy).is_some();
+                (if zp { AddressingMode::ZeroPage } else { AddressingMode::Absolute }, Some(value))
+            }
+        };
+
+        let opcode = opcode_with_policy(mnemonic, mode, undocumented_policy)
             .ok_or_else(|| AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() })?;
 
         let address = pc;
         bytes.push(opcode.code);
         match mode {
-            AddressingMode::Implied => {}
-            AddressingMode::Immediate => {
-                let arg = operand.unwrap().trim_start_matches('#').trim();
-                let value = parse_u16(arg, line_no)?;
-                if value > 0xff { return Err(AssembleError::InvalidNumber { line: line_no, text: arg.into() }); }
+            AddressingMode::Implied | AddressingMode::Accumulator => {}
+            AddressingMode::Immediate | AddressingMode::ZeroPage | AddressingMode::ZeroPageX |
+            AddressingMode::ZeroPageY | AddressingMode::Relative | AddressingMode::IndexedIndirect |
+            AddressingMode::IndirectIndexed => {
+                let value = operand_value.unwrap();
+                if value > 0xff { return Err(AssembleError::InvalidNumber { line: line_no, text: operand.unwrap().into() }); }
                 bytes.push(value as u8);
             }
-            AddressingMode::Absolute => {
-                let arg = operand.unwrap();
-                let value = parse_u16(arg, line_no)?;
+            AddressingMode::Absolute | AddressingMode::AbsoluteX | AddressingMode::AbsoluteY |
+            AddressingMode::Indirect => {
+                let value = operand_value.unwrap();
                 bytes.extend_from_slice(&[value as u8, (value >> 8) as u8]);
             }
         }
@@ -144,6 +168,19 @@ mod tests {
     fn opcode_metadata_is_available_to_tooling() {
         let sei = OPCODES.iter().find(|op| op.mnemonic == "SEI").unwrap();
         assert_eq!(sei.cycles, 2);
-        assert!(!sei.undocumented);
+        assert_eq!(sei.class, OpcodeClass::Documented);
+    }
+
+    #[test]
+    fn chooses_zero_page_when_instruction_supports_it() {
+        let out = assemble("lda $20\nsta $21\n", Target::c64()).unwrap();
+        assert_eq!(out.bytes, vec![0xa5, 0x20, 0x85, 0x21]);
+        assert_eq!(out.cycles, 6);
+    }
+
+    #[test]
+    fn undocumented_policy_can_be_selected_in_source() {
+        let denied = assemble("lax ($20,x)\n", Target::c64());
+        assert!(denied.is_err());
     }
 }
