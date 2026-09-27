@@ -64,6 +64,7 @@ impl BusMap {
 pub struct ScheduledInstruction {
     pub address: u16,
     pub source: crate::SourceSpan,
+    pub expansion: crate::source::ExpansionTrace,
     pub nominal_cycles: u16,
     pub start_cycle: u16,
     pub end_cycle: u16,
@@ -103,6 +104,7 @@ impl BusMap {
             scheduled.push(ScheduledInstruction {
                 address: instruction.address,
                 source: instruction.source.clone(),
+                expansion: instruction.expansion.clone(),
                 nominal_cycles: nominal as u16,
                 start_cycle: start,
                 end_cycle: cycle as u16,
@@ -254,12 +256,13 @@ mod tests {
         bus.slots[2] = BusOwner::Badline;
         bus.slots[3] = BusOwner::Badline;
         let instructions = vec![
-            crate::InstructionInfo { address: 0x1000, source: crate::SourceSpan { file_id: 0, line: 10, column_start: 1, column_end: 7 }, opcode: crate::opcode("LDA", crate::AddressingMode::Immediate).unwrap() },
-            crate::InstructionInfo { address: 0x1002, source: crate::SourceSpan { file_id: 0, line: 11, column_start: 1, column_end: 4 }, opcode: crate::opcode("RTS", crate::AddressingMode::Implied).unwrap() },
+            crate::InstructionInfo { address: 0x1000, source: crate::SourceSpan { file_id: 0, line: 10, column_start: 1, column_end: 7 }, expansion: crate::source::ExpansionTrace::default(), opcode: crate::opcode("LDA", crate::AddressingMode::Immediate).unwrap() },
+            crate::InstructionInfo { address: 0x1002, source: crate::SourceSpan { file_id: 0, line: 11, column_start: 1, column_end: 4 }, expansion: crate::source::ExpansionTrace::default(), opcode: crate::opcode("RTS", crate::AddressingMode::Implied).unwrap() },
         ];
         let schedule = bus.schedule(&instructions);
         assert_eq!(schedule.instructions[0].end_cycle, 2);
         assert_eq!(schedule.instructions[0].source.line, 10);
+        assert!(schedule.instructions[0].expansion.frames.is_empty());
         assert_eq!(schedule.instructions[1].stalled_cycles, 2);
         assert_eq!(schedule.instructions[1].end_cycle, 10);
         assert_eq!(schedule.stalled_cycles, 2);
