@@ -124,6 +124,16 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             continue;
         }
 
+        if let Some(rest) = line.strip_prefix(".vic_sprites") {
+            let value = expr::eval(rest.trim(), &symbols, line_no)?
+                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: rest.trim().to_string() })?;
+            if value > 0xff {
+                return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() });
+            }
+            vic_state.sprite_dma_mask = value as u8;
+            continue;
+        }
+
         if line.ends_with(':') || (!line.starts_with('.') && line.contains('=')) {
             continue;
         }
@@ -226,6 +236,9 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             line_cycles: profile.cycles_per_line,
             available_cycles: vic.cpu_available_cycles,
             vic_stolen_cycles: vic.vic_stolen_cycles,
+            badline_stolen_cycles: vic.badline_stolen_cycles,
+            sprite_stolen_cycles: vic.sprite_stolen_cycles,
+            active_sprites: vic.active_sprites,
             badline: vic.badline,
             min_cycles: range.min,
             max_cycles: range.max,
@@ -348,6 +361,16 @@ mod tests {
         let bad = assemble(".vic_yscroll 4\n.raster 52 {\nnop\n}\n", Target::c64()).unwrap();
         assert!(bad.raster_contracts[0].badline);
         assert_eq!(bad.raster_contracts[0].available_cycles, 23);
+    }
+
+    #[test]
+    fn sprite_dma_reduces_raster_budget() {
+        let out = assemble(".vic_display off\n.vic_sprites 7\n.raster 100 {\nnop\n}\n", Target::c64()).unwrap();
+        let contract = out.raster_contracts[0];
+        assert_eq!(contract.active_sprites, 3);
+        assert_eq!(contract.sprite_stolen_cycles, 6);
+        assert_eq!(contract.vic_stolen_cycles, 6);
+        assert_eq!(contract.available_cycles, 57);
     }
 
     #[test]
