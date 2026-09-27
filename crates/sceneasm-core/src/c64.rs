@@ -23,19 +23,6 @@ impl C64Timing {
     pub const fn line_budget(self, raster_line: u16) -> Option<u16> {
         if raster_line < self.lines_per_frame { Some(self.cycles_per_line) } else { None }
     }
-
-    #[test]
-    fn sprite_dma_follows_y_window() {
-        let timing = C64Timing::pal();
-        let mut state = VicState::default();
-        state.display_enabled = false;
-        state.sprite_enable_mask = 1;
-        state.sprite_y[0] = 100;
-        assert_eq!(timing.vic_line(99, state).unwrap().active_sprites, 0);
-        assert_eq!(timing.vic_line(100, state).unwrap().active_sprites, 1);
-        assert_eq!(timing.vic_line(120, state).unwrap().active_sprites, 1);
-        assert_eq!(timing.vic_line(121, state).unwrap().active_sprites, 0);
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,6 +206,7 @@ pub struct RasterContract {
     pub badline_stolen_cycles: u16,
     pub sprite_stolen_cycles: u16,
     pub active_sprites: u8,
+    pub sprite_dma_mask: u8,
     pub badline: bool,
     pub min_cycles: u64,
     pub max_cycles: u64,
@@ -275,6 +263,20 @@ mod tests {
         assert_eq!(schedule.instructions[1].stalled_cycles, 2);
         assert_eq!(schedule.instructions[1].end_cycle, 10);
         assert_eq!(schedule.stalled_cycles, 2);
+    }
+
+
+    #[test]
+    fn sprite_dma_follows_y_window() {
+        let timing = C64Timing::pal();
+        let mut state = VicState::default();
+        state.display_enabled = false;
+        state.sprite_enable_mask = 1;
+        state.sprite_y[0] = 100;
+        assert_eq!(timing.vic_line(99, state).unwrap().active_sprites, 0);
+        assert_eq!(timing.vic_line(100, state).unwrap().active_sprites, 1);
+        assert_eq!(timing.vic_line(120, state).unwrap().active_sprites, 1);
+        assert_eq!(timing.vic_line(121, state).unwrap().active_sprites, 0);
     }
 
     #[test]
