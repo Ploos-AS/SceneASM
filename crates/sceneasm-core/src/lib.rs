@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 pub mod opcodes;
-pub use opcodes::{opcode, opcode_by_byte, AddressingMode, ExtraCycle, Opcode, OPCODES};
+pub use opcodes::{
+    opcode, opcode_by_byte, opcode_with_policy, AddressingMode, ExtraCycle, Opcode, OpcodeClass,
+    UndocumentedPolicy, OPCODES, UNDOCUMENTED_OPCODES,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cpu { Mos6502, Mos6510 }
