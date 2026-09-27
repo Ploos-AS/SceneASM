@@ -5,6 +5,7 @@ use thiserror::Error;
 pub mod opcodes;
 pub mod layout;
 pub mod expr;
+pub mod timing;
 pub use opcodes::{
     opcode, opcode_by_byte, opcode_with_policy, AddressingMode, ExtraCycle, Opcode, OpcodeClass,
     UndocumentedPolicy, OPCODES, UNDOCUMENTED_OPCODES,
@@ -30,6 +31,7 @@ pub struct Assembly {
     pub origin: u16,
     pub instructions: Vec<InstructionInfo>,
     pub cycles: u64,
+    pub cycle_range: timing::CycleRange,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -48,6 +50,8 @@ pub enum AssembleError {
     InvalidExpression { line: usize, text: String },
     #[error("assertion failed on line {line}: {expression}")]
     AssertionFailed { line: usize, expression: String },
+    #[error("cycle budget exceeded on line {line}: worst case {actual} > budget {budget}")]
+    CycleBudgetExceeded { line: usize, actual: u64, budget: u64 },
 }
 
 pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError> {
@@ -84,6 +88,10 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
                 "all" => UndocumentedPolicy::All,
                 _ => return Err(AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() }),
             };
+            continue;
+        }
+
+        if line.starts_with(".assert_cycles") {
             continue;
         }
 
@@ -147,7 +155,22 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         instructions.push(InstructionInfo { address, opcode });
     }
 
-    Ok(Assembly { bytes, symbols, origin, instructions, cycles })
+    let cycle_range = timing::analyze(&instructions);
+    for (index, raw) in source.lines().enumerate() {
+        let line = raw.split(';').next().unwrap_or("").trim();
+        if let Some(rest) = line.strip_prefix(".assert_cycles") {
+            let rest = rest.trim();
+            let budget_text = rest.strip_prefix("<=").map(str::trim)
+                .ok_or_else(|| AssembleError::InvalidExpression { line: index + 1, text: rest.to_string() })?;
+            let budget = expr::eval(budget_text, &symbols, index + 1)?
+                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: index + 1, name: budget_text.to_string() })? as u64;
+            if !cycle_range.fits(budget) {
+                return Err(AssembleError::CycleBudgetExceeded { line: index + 1, actual: cycle_range.max, budget });
+            }
+        }
+    }
+
+    Ok(Assembly { bytes, symbols, origin, instructions, cycles, cycle_range })
 }
 
 fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
@@ -173,6 +196,7 @@ mod tests {
         assert_eq!(out.symbols["start"], 0x080d);
         assert_eq!(out.bytes, vec![0x78, 0xa9, 0x06, 0x8d, 0x20, 0xd0, 0x60]);
         assert_eq!(out.cycles, 14);
+        assert_eq!(out.cycle_range, timing::CycleRange { min: 14, max: 14 });
         assert_eq!(out.instructions.len(), 4);
         assert_eq!(out.instructions[2].address, 0x0810);
     }
@@ -195,6 +219,14 @@ mod tests {
     fn undocumented_policy_can_be_selected_in_source() {
         let denied = assemble("lax ($20,x)\n", Target::c64());
         assert!(denied.is_err());
+    }
+
+    #[test]
+    fn cycle_contract_uses_worst_case_timing() {
+        let ok = assemble("lda $1234,x\nbne $10\n.assert_cycles <= 9\n", Target::c64());
+        assert!(ok.is_ok());
+        let failed = assemble("lda $1234,x\nbne $10\n.assert_cycles <= 8\n", Target::c64());
+        assert!(matches!(failed, Err(AssembleError::CycleBudgetExceeded { actual: 9, budget: 8, .. })));
     }
 
     #[test]
