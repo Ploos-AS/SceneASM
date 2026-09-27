@@ -15,12 +15,43 @@ pub enum AddressingMode {
     IndirectIndexed,
 }
 
+macro_rules! uop {
+    ($m:literal,$mode:ident,$code:expr,$bytes:expr,$cycles:expr,$class:ident) => {
+        Opcode { mnemonic:$m, mode:AddressingMode::$mode, code:$code, bytes:$bytes, cycles:$cycles, extra_cycle:ExtraCycle::None, class:OpcodeClass::$class }
+    };
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtraCycle {
     None,
     PageCross,
     BranchTaken,
     BranchTakenAndPageCross,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OpcodeClass {
+    Documented,
+    StableUndocumented,
+    UnstableUndocumented,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndocumentedPolicy {
+    Deny,
+    Stable,
+    All,
+}
+
+impl UndocumentedPolicy {
+    pub const fn allows(self, class: OpcodeClass) -> bool {
+        match (self, class) {
+            (_, OpcodeClass::Documented) => true,
+            (Self::Stable | Self::All, OpcodeClass::StableUndocumented) => true,
+            (Self::All, OpcodeClass::UnstableUndocumented) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,15 +62,15 @@ pub struct Opcode {
     pub bytes: u8,
     pub cycles: u8,
     pub extra_cycle: ExtraCycle,
-    pub undocumented: bool,
+    pub class: OpcodeClass,
 }
 
 macro_rules! op {
     ($m:literal,$mode:ident,$code:expr,$bytes:expr,$cycles:expr) => {
-        Opcode { mnemonic:$m, mode:AddressingMode::$mode, code:$code, bytes:$bytes, cycles:$cycles, extra_cycle:ExtraCycle::None, undocumented:false }
+        Opcode { mnemonic:$m, mode:AddressingMode::$mode, code:$code, bytes:$bytes, cycles:$cycles, extra_cycle:ExtraCycle::None, class:OpcodeClass::Documented }
     };
     ($m:literal,$mode:ident,$code:expr,$bytes:expr,$cycles:expr,$extra:ident) => {
-        Opcode { mnemonic:$m, mode:AddressingMode::$mode, code:$code, bytes:$bytes, cycles:$cycles, extra_cycle:ExtraCycle::$extra, undocumented:false }
+        Opcode { mnemonic:$m, mode:AddressingMode::$mode, code:$code, bytes:$bytes, cycles:$cycles, extra_cycle:ExtraCycle::$extra, class:OpcodeClass::Documented }
     };
 }
 
@@ -89,6 +120,28 @@ pub const OPCODES: &[Opcode] = &[
     op!("INC",AbsoluteX,0xfe,3,7),
 ];
 
+pub const UNDOCUMENTED_OPCODES: &[Opcode] = &[
+    // Widely used composite NMOS operations. More variants are added only with
+    // verified silicon/timing metadata.
+    uop!("SLO",IndexedIndirect,0x03,2,8,StableUndocumented),
+    uop!("RLA",IndexedIndirect,0x23,2,8,StableUndocumented),
+    uop!("SRE",IndexedIndirect,0x43,2,8,StableUndocumented),
+    uop!("RRA",IndexedIndirect,0x63,2,8,StableUndocumented),
+    uop!("SAX",IndexedIndirect,0x83,2,6,StableUndocumented),
+    uop!("LAX",IndexedIndirect,0xa3,2,6,StableUndocumented),
+    uop!("DCP",IndexedIndirect,0xc3,2,8,StableUndocumented),
+    uop!("ISC",IndexedIndirect,0xe3,2,8,StableUndocumented),
+    uop!("ANC",Immediate,0x0b,2,2,StableUndocumented),
+    uop!("ALR",Immediate,0x4b,2,2,StableUndocumented),
+    uop!("ARR",Immediate,0x6b,2,2,UnstableUndocumented),
+    uop!("XAA",Immediate,0x8b,2,2,UnstableUndocumented),
+];
+
+pub fn opcode_with_policy(mnemonic: &str, mode: AddressingMode, policy: UndocumentedPolicy) -> Option<Opcode> {
+    OPCODES.iter().chain(UNDOCUMENTED_OPCODES.iter()).copied()
+        .find(|op| op.mnemonic.eq_ignore_ascii_case(mnemonic) && op.mode == mode && policy.allows(op.class))
+}
+
 pub fn opcode(mnemonic: &str, mode: AddressingMode) -> Option<Opcode> {
     OPCODES.iter().copied().find(|op| op.mnemonic.eq_ignore_ascii_case(mnemonic) && op.mode == mode)
 }
@@ -137,6 +190,14 @@ mod tests {
             };
             assert_eq!(op.bytes, expected, "bad length for {} {:?}", op.mnemonic, op.mode);
         }
+    }
+
+    #[test]
+    fn undocumented_policy_is_explicit() {
+        assert!(opcode_with_policy("LAX", AddressingMode::IndexedIndirect, UndocumentedPolicy::Deny).is_none());
+        assert!(opcode_with_policy("LAX", AddressingMode::IndexedIndirect, UndocumentedPolicy::Stable).is_some());
+        assert!(opcode_with_policy("XAA", AddressingMode::Immediate, UndocumentedPolicy::Stable).is_none());
+        assert!(opcode_with_policy("XAA", AddressingMode::Immediate, UndocumentedPolicy::All).is_some());
     }
 
     #[test]
