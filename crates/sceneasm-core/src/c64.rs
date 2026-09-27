@@ -51,6 +51,28 @@ impl Default for VicState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusOwner {
+    Cpu,
+    Badline,
+    Sprite(u8),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BusMap {
+    pub slots: Vec<BusOwner>,
+}
+
+impl BusMap {
+    pub fn cpu_cycles(&self) -> u16 {
+        self.slots.iter().filter(|owner| matches!(owner, BusOwner::Cpu)).count() as u16
+    }
+
+    pub fn stolen_cycles(&self) -> u16 {
+        self.slots.len() as u16 - self.cpu_cycles()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VicLineTiming {
     pub badline: bool,
     pub badline_stolen_cycles: u16,
@@ -59,10 +81,11 @@ pub struct VicLineTiming {
     pub active_sprites: u8,
     pub sprite_dma_mask: u8,
     pub cpu_available_cycles: u16,
+    pub bus: BusMap,
 }
 
 impl C64Timing {
-    pub const fn vic_line(self, raster_line: u16, state: VicState) -> Option<VicLineTiming> {
+    pub fn vic_line(self, raster_line: u16, state: VicState) -> Option<VicLineTiming> {
         let total = match self.line_budget(raster_line) { Some(v) => v, None => return None };
         // Badline condition for the normal display window. The VIC-II performs
         // 40 character-matrix fetches, taking 40 CPU bus cycles.
@@ -87,7 +110,31 @@ impl C64Timing {
         // Line-level accounting: each active sprite consumes two CPU bus
         // cycles for its graphics fetch group. Cycle-exact slots come later.
         let sprite_stolen = active_sprites as u16 * 2;
-        let stolen = badline_stolen + sprite_stolen;
+        let mut slots = vec![BusOwner::Cpu; total as usize];
+        if badline {
+            // Character matrix fetch window. This is an explicit occupancy
+            // model so exact VIC revisions can refine the slot positions.
+            for slot in slots.iter_mut().take(54).skip(14) {
+                *slot = BusOwner::Badline;
+            }
+        }
+        // Initial conservative sprite slot placement at the end of the line.
+        // Each active sprite occupies two CPU-visible bus cycles.
+        let mut cursor = total as usize;
+        for sprite in (0u8..8).rev() {
+            if sprite_dma_mask & (1 << sprite) != 0 {
+                for _ in 0..2 {
+                    if cursor > 0 {
+                        cursor -= 1;
+                        if matches!(slots[cursor], BusOwner::Cpu) {
+                            slots[cursor] = BusOwner::Sprite(sprite);
+                        }
+                    }
+                }
+            }
+        }
+        let bus = BusMap { slots };
+        let stolen = bus.stolen_cycles();
         Some(VicLineTiming {
             badline,
             badline_stolen_cycles: badline_stolen,
@@ -95,7 +142,8 @@ impl C64Timing {
             vic_stolen_cycles: stolen,
             active_sprites,
             sprite_dma_mask,
-            cpu_available_cycles: total.saturating_sub(stolen),
+            cpu_available_cycles: bus.cpu_cycles(),
+            bus,
         })
     }
 }
@@ -164,5 +212,7 @@ mod tests {
         assert_eq!(line.badline_stolen_cycles, 0);
         assert_eq!(line.vic_stolen_cycles, 6);
         assert_eq!(line.cpu_available_cycles, 57);
+        assert_eq!(line.bus.stolen_cycles(), 6);
+        assert!(line.bus.slots.iter().any(|owner| matches!(owner, BusOwner::Sprite(0))));
     }
 }
