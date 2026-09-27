@@ -130,7 +130,25 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             if value > 0xff {
                 return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() });
             }
-            vic_state.sprite_dma_mask = value as u8;
+            vic_state.sprite_enable_mask = value as u8;
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix(".vic_sprite_y") {
+            let mut parts = rest.split_whitespace();
+            let sprite_text = parts.next().ok_or_else(|| AssembleError::InvalidVicState { line: line_no, text: line.to_string() })?;
+            let y_text = parts.next().ok_or_else(|| AssembleError::InvalidVicState { line: line_no, text: line.to_string() })?;
+            if parts.next().is_some() {
+                return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() });
+            }
+            let sprite = expr::eval(sprite_text, &symbols, line_no)?
+                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: sprite_text.to_string() })?;
+            let y = expr::eval(y_text, &symbols, line_no)?
+                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: y_text.to_string() })?;
+            if sprite > 7 || y > 0xff {
+                return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() });
+            }
+            vic_state.sprite_y[sprite as usize] = y as u8;
             continue;
         }
 
@@ -239,6 +257,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             badline_stolen_cycles: vic.badline_stolen_cycles,
             sprite_stolen_cycles: vic.sprite_stolen_cycles,
             active_sprites: vic.active_sprites,
+            sprite_dma_mask: vic.sprite_dma_mask,
             badline: vic.badline,
             min_cycles: range.min,
             max_cycles: range.max,
@@ -365,12 +384,21 @@ mod tests {
 
     #[test]
     fn sprite_dma_reduces_raster_budget() {
-        let out = assemble(".vic_display off\n.vic_sprites 7\n.raster 100 {\nnop\n}\n", Target::c64()).unwrap();
+        let out = assemble(".vic_display off\n.vic_sprites 7\n.vic_sprite_y 0 90\n.vic_sprite_y 1 90\n.vic_sprite_y 2 90\n.raster 100 {\nnop\n}\n", Target::c64()).unwrap();
         let contract = out.raster_contracts[0];
         assert_eq!(contract.active_sprites, 3);
         assert_eq!(contract.sprite_stolen_cycles, 6);
         assert_eq!(contract.vic_stolen_cycles, 6);
         assert_eq!(contract.available_cycles, 57);
+    }
+
+    #[test]
+    fn sprite_y_state_selects_dma_per_raster() {
+        let out = assemble(".vic_display off\n.vic_sprites 1\n.vic_sprite_y 0 100\n.raster 99 {\nnop\n}\n.raster 100 {\nnop\n}\n.raster 121 {\nnop\n}\n", Target::c64()).unwrap();
+        assert_eq!(out.raster_contracts[0].active_sprites, 0);
+        assert_eq!(out.raster_contracts[1].sprite_dma_mask, 1);
+        assert_eq!(out.raster_contracts[1].active_sprites, 1);
+        assert_eq!(out.raster_contracts[2].active_sprites, 0);
     }
 
     #[test]
