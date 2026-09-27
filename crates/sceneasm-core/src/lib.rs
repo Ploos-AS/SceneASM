@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
+pub mod opcodes;
+pub use opcodes::{opcode, opcode_by_byte, AddressingMode, ExtraCycle, Opcode, OPCODES};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cpu { Mos6502, Mos6510 }
 
@@ -11,30 +14,6 @@ pub struct Target { pub name: &'static str, pub cpu: Cpu, pub origin: u16 }
 impl Target {
     pub const fn c64() -> Self { Self { name: "c64", cpu: Cpu::Mos6510, origin: 0x0801 } }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AddressingMode { Implied, Immediate, Absolute }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Opcode {
-    pub mnemonic: &'static str,
-    pub mode: AddressingMode,
-    pub code: u8,
-    pub bytes: u8,
-    pub cycles: u8,
-    pub undocumented: bool,
-}
-
-pub const OPCODES: &[Opcode] = &[
-    Opcode { mnemonic: "BRK", mode: AddressingMode::Implied, code: 0x00, bytes: 1, cycles: 7, undocumented: false },
-    Opcode { mnemonic: "JMP", mode: AddressingMode::Absolute, code: 0x4c, bytes: 3, cycles: 3, undocumented: false },
-    Opcode { mnemonic: "CLI", mode: AddressingMode::Implied, code: 0x58, bytes: 1, cycles: 2, undocumented: false },
-    Opcode { mnemonic: "RTS", mode: AddressingMode::Implied, code: 0x60, bytes: 1, cycles: 6, undocumented: false },
-    Opcode { mnemonic: "SEI", mode: AddressingMode::Implied, code: 0x78, bytes: 1, cycles: 2, undocumented: false },
-    Opcode { mnemonic: "STA", mode: AddressingMode::Absolute, code: 0x8d, bytes: 3, cycles: 4, undocumented: false },
-    Opcode { mnemonic: "LDA", mode: AddressingMode::Immediate, code: 0xa9, bytes: 2, cycles: 2, undocumented: false },
-    Opcode { mnemonic: "NOP", mode: AddressingMode::Implied, code: 0xea, bytes: 1, cycles: 2, undocumented: false },
-];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstructionInfo { pub address: u16, pub opcode: Opcode }
@@ -104,7 +83,7 @@ pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError>
             (upper.as_str(), AddressingMode::Implied, None)
         };
 
-        let opcode = OPCODES.iter().copied().find(|op| op.mnemonic == mnemonic && op.mode == mode)
+        let opcode = opcode(mnemonic, mode)
             .ok_or_else(|| AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() })?;
 
         let address = pc;
