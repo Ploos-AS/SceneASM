@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sceneasm-core",
+    "crates/sceneasm-cli",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Ploos-AS/SceneASM"
+rust-version = "1.80"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
