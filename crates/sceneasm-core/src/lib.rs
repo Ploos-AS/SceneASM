@@ -23,9 +23,17 @@ impl Target {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceSpan {
+    pub file_id: u32,
+    pub line: usize,
+    pub column_start: usize,
+    pub column_end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstructionInfo {
     pub address: u16,
-    pub source_line: usize,
+    pub source: SourceSpan,
     pub opcode: Opcode,
 }
 
@@ -261,7 +269,13 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         }
         pc = pc.wrapping_add(opcode.bytes as u16);
         cycles += opcode.cycles as u64;
-        instructions.push(InstructionInfo { address, source_line: line_no, opcode });
+        let column_start = raw_line.len().saturating_sub(raw_line.trim_start().len()) + 1;
+        let column_end = raw_line.len() + 1;
+        instructions.push(InstructionInfo {
+            address,
+            source: SourceSpan { file_id: 0, line: line_no, column_start, column_end },
+            opcode,
+        });
     }
 
     if let Some((source_line, raster_line, start, state)) = open_raster.take() {
@@ -406,7 +420,7 @@ mod tests {
         assert_eq!(contract.scheduled_stall_cycles, 0);
         assert_eq!(contract.schedule.len(), 1);
         assert_eq!(contract.schedule[0].address, out.instructions[1].address);
-        assert_eq!(contract.schedule[0].source_line, out.instructions[1].source_line);
+        assert_eq!(contract.schedule[0].source.line, out.instructions[1].source.line);
     }
 
     #[test]
@@ -428,7 +442,7 @@ mod tests {
         let contract = &out.raster_contracts[0];
         assert_eq!(contract.schedule.len(), 3);
         assert_eq!(contract.schedule[0].nominal_cycles, 2);
-        assert_eq!(contract.schedule[0].source_line, 3);
+        assert_eq!(contract.schedule[0].source.line, 3);
         assert_eq!(contract.schedule[0].start_cycle, 0);
         assert_eq!(contract.schedule[0].end_cycle, 2);
         assert_eq!(contract.schedule[1].start_cycle, 2);
