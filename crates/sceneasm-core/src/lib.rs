@@ -58,6 +58,8 @@ pub enum AssembleError {
     InvalidRasterLine { source_line: usize, raster_line: u16 },
     #[error("raster budget exceeded on source line {source_line}: raster {raster_line}, worst case {actual} > {budget}")]
     RasterBudgetExceeded { source_line: usize, raster_line: u16, actual: u64, budget: u16 },
+    #[error("invalid VIC-II state on line {line}: {text}")]
+    InvalidVicState { line: usize, text: String },
 }
 
 pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError> {
@@ -72,8 +74,9 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
     let symbols = resolved.symbols;
     let mut instructions = Vec::new();
     let mut cycles = 0u64;
-    let mut raster_blocks: Vec<(usize, u16, usize)> = Vec::new();
-    let mut open_raster: Option<(usize, u16, usize)> = None;
+    let mut raster_blocks: Vec<(usize, u16, usize, usize, c64::VicState)> = Vec::new();
+    let mut open_raster: Option<(usize, u16, usize, c64::VicState)> = None;
+    let mut vic_state = c64::VicState::default();
 
     for (index, raw) in source.lines().enumerate() {
         let line_no = index + 1;
@@ -86,7 +89,9 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         }
 
         if line == "}" {
-            if let Some(block) = open_raster.take() { raster_blocks.push(block); }
+            if let Some((source_line, raster_line, start, state)) = open_raster.take() {
+                raster_blocks.push((source_line, raster_line, start, instructions.len(), state));
+            }
             continue;
         }
 
@@ -95,9 +100,28 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
                 let expression = rest.trim_end_matches('{').trim();
                 let raster_line = expr::eval(expression, &symbols, line_no)?
                     .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: expression.to_string() })?;
-                open_raster = Some((line_no, raster_line, instructions.len()));
+                open_raster = Some((line_no, raster_line, instructions.len(), vic_state));
                 continue;
             }
+        }
+
+        if let Some(rest) = line.strip_prefix(".vic_display") {
+            vic_state.display_enabled = match rest.trim().to_ascii_lowercase().as_str() {
+                "on" => true,
+                "off" => false,
+                _ => return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() }),
+            };
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix(".vic_yscroll") {
+            let value = expr::eval(rest.trim(), &symbols, line_no)?
+                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: rest.trim().to_string() })?;
+            if value > 7 {
+                return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() });
+            }
+            vic_state.y_scroll = value as u8;
+            continue;
         }
 
         if line.ends_with(':') || (!line.starts_with('.') && line.contains('=')) {
@@ -187,13 +211,15 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         instructions.push(InstructionInfo { address, opcode });
     }
 
-    if let Some(block) = open_raster.take() { raster_blocks.push(block); }
+    if let Some((source_line, raster_line, start, state)) = open_raster.take() {
+        raster_blocks.push((source_line, raster_line, start, instructions.len(), state));
+    }
     let cycle_range = timing::analyze(&instructions);
     let mut raster_contracts = Vec::new();
-    for (source_line, raster_line, start) in raster_blocks {
-        let range = timing::analyze(&instructions[start..]);
+    for (source_line, raster_line, start, end, state) in raster_blocks {
+        let range = timing::analyze(&instructions[start..end]);
         let profile = c64::C64Timing::pal();
-        let vic = profile.vic_line(raster_line, c64::VicState::default())
+        let vic = profile.vic_line(raster_line, state)
             .ok_or(AssembleError::InvalidRasterLine { source_line, raster_line })?;
         let contract = c64::RasterContract {
             line: raster_line,
@@ -308,6 +334,27 @@ mod tests {
         assert_eq!(contract.vic_stolen_cycles, 40);
         assert_eq!(contract.available_cycles, 23);
         assert_eq!(contract.margin(), 21);
+    }
+
+    #[test]
+    fn vic_state_changes_badline_analysis() {
+        let normal = assemble(".vic_display off\n.raster 51 {\nnop\n}\n", Target::c64()).unwrap();
+        assert!(!normal.raster_contracts[0].badline);
+        assert_eq!(normal.raster_contracts[0].available_cycles, 63);
+
+        let shifted = assemble(".vic_yscroll 4\n.raster 51 {\nnop\n}\n", Target::c64()).unwrap();
+        assert!(!shifted.raster_contracts[0].badline);
+
+        let bad = assemble(".vic_yscroll 4\n.raster 52 {\nnop\n}\n", Target::c64()).unwrap();
+        assert!(bad.raster_contracts[0].badline);
+        assert_eq!(bad.raster_contracts[0].available_cycles, 23);
+    }
+
+    #[test]
+    fn raster_blocks_are_independently_scoped() {
+        let out = assemble(".raster 100 {\nnop\n}\n.raster 101 {\nrts\n}\n", Target::c64()).unwrap();
+        assert_eq!(out.raster_contracts[0].min_cycles, 2);
+        assert_eq!(out.raster_contracts[1].min_cycles, 6);
     }
 
     #[test]
