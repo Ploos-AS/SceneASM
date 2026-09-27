@@ -91,6 +91,9 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
                 };
                 continue;
             }
+            if line == "}" || (line.starts_with(".raster") && line.ends_with('{')) {
+                continue;
+            }
             if let Some(rest) = line.strip_prefix(".assert") {
                 // Assertions are evaluated after layout converges.
                 let _ = rest;
