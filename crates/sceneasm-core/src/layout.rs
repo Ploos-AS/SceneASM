@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{opcode_with_policy, AddressingMode, AssembleError, UndocumentedPolicy};
+use crate::{expr, opcode_with_policy, AddressingMode, AssembleError, UndocumentedPolicy};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
@@ -9,14 +9,7 @@ pub struct Layout {
 }
 
 pub fn resolve_value(text: &str, symbols: &BTreeMap<String, u16>, line: usize) -> Result<Option<u16>, AssembleError> {
-    let text = text.trim();
-    if let Some(value) = parse_literal(text) {
-        return Ok(Some(value));
-    }
-    if is_identifier(text) {
-        return Ok(symbols.get(text).copied());
-    }
-    Err(AssembleError::InvalidNumber { line, text: text.to_string() })
+    expr::eval(text, symbols, line)
 }
 
 pub fn choose_mode(
@@ -110,14 +103,3 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
     Err(AssembleError::LayoutDidNotConverge)
 }
 
-fn parse_literal(text: &str) -> Option<u16> {
-    if let Some(hex) = text.strip_prefix('$') { u16::from_str_radix(hex, 16).ok() }
-    else if let Some(hex) = text.strip_prefix("0x") { u16::from_str_radix(hex, 16).ok() }
-    else { text.parse::<u16>().ok() }
-}
-
-fn is_identifier(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars.next().is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
-        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
-}
