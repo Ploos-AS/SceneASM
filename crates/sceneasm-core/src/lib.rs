@@ -46,6 +46,8 @@ pub enum AssembleError {
     LayoutDidNotConverge,
     #[error("invalid expression on line {line}: {text}")]
     InvalidExpression { line: usize, text: String },
+    #[error("assertion failed on line {line}: {expression}")]
+    AssertionFailed { line: usize, expression: String },
 }
 
 pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError> {
@@ -71,7 +73,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             if bytes.is_empty() { origin = value; pc = value; continue; }
         }
 
-        if line.ends_with(':') {
+        if line.ends_with(':') || (!line.starts_with('.') && line.contains('=')) {
             continue;
         }
 
@@ -82,6 +84,16 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
                 "all" => UndocumentedPolicy::All,
                 _ => return Err(AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() }),
             };
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix(".assert") {
+            let expression = rest.trim();
+            let value = expr::eval(expression, &symbols, line_no)?
+                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: expression.to_string() })?;
+            if value == 0 {
+                return Err(AssembleError::AssertionFailed { line: line_no, expression: expression.to_string() });
+            }
             continue;
         }
 
@@ -183,6 +195,16 @@ mod tests {
     fn undocumented_policy_can_be_selected_in_source() {
         let denied = assemble("lax ($20,x)\n", Target::c64());
         assert!(denied.is_err());
+    }
+
+    #[test]
+    fn constants_and_assertions_share_expression_semantics() {
+        let out = assemble(".org $2000\ntable:\n.byte 1,2,3\ntable_end:\nSIZE = table_end - table\n.assert SIZE <= 3\n.byte SIZE\n", Target::c64()).unwrap();
+        assert_eq!(out.symbols["SIZE"], 3);
+        assert_eq!(out.bytes, vec![1, 2, 3, 3]);
+
+        let failed = assemble("VALUE = 4\n.assert VALUE <= 3\n", Target::c64());
+        assert!(matches!(failed, Err(AssembleError::AssertionFailed { .. })));
     }
 
     #[test]
