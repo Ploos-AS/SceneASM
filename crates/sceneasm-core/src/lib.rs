@@ -327,7 +327,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         }
     }
 
-    Ok(Assembly { bytes, symbols, origin, instructions, cycles, cycle_range, raster_contracts })
+    Ok(Assembly { bytes, symbols, origin, instructions, cycles, cycle_range, raster_contracts, source_map })
 }
 
 fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
@@ -345,6 +345,13 @@ fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assembly_registers_main_source() {
+        let out = assemble("nop\n", Target::c64()).unwrap();
+        assert_eq!(out.source_map.file(0).unwrap().name, "<input>");
+        assert_eq!(out.instructions[0].source.file_id, 0);
+    }
 
     #[test]
     fn supports_text_and_forward_origin_gap() {
