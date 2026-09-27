@@ -76,6 +76,7 @@ impl BusMap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScheduledInstruction {
     pub address: u16,
+    pub source_line: usize,
     pub nominal_cycles: u16,
     pub start_cycle: u16,
     pub end_cycle: u16,
@@ -114,6 +115,7 @@ impl BusMap {
 
             scheduled.push(ScheduledInstruction {
                 address: instruction.address,
+                source_line: instruction.source_line,
                 nominal_cycles: nominal as u16,
                 start_cycle: start,
                 end_cycle: cycle as u16,
@@ -264,11 +266,12 @@ mod tests {
         bus.slots[2] = BusOwner::Badline;
         bus.slots[3] = BusOwner::Badline;
         let instructions = vec![
-            crate::InstructionInfo { address: 0x1000, opcode: crate::opcode("LDA", crate::AddressingMode::Immediate).unwrap() },
-            crate::InstructionInfo { address: 0x1002, opcode: crate::opcode("RTS", crate::AddressingMode::Implied).unwrap() },
+            crate::InstructionInfo { address: 0x1000, source_line: 10, opcode: crate::opcode("LDA", crate::AddressingMode::Immediate).unwrap() },
+            crate::InstructionInfo { address: 0x1002, source_line: 11, opcode: crate::opcode("RTS", crate::AddressingMode::Implied).unwrap() },
         ];
         let schedule = bus.schedule(&instructions);
         assert_eq!(schedule.instructions[0].end_cycle, 2);
+        assert_eq!(schedule.instructions[0].source_line, 10);
         assert_eq!(schedule.instructions[1].stalled_cycles, 2);
         assert_eq!(schedule.instructions[1].end_cycle, 10);
         assert_eq!(schedule.stalled_cycles, 2);
