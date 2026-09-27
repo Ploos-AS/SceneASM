@@ -205,11 +205,12 @@ impl C64Timing {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RasterContract {
     pub line: u16,
     pub scheduled_end_cycle: u16,
     pub scheduled_stall_cycles: u16,
+    pub schedule: Vec<ScheduledInstruction>,
     pub line_cycles: u16,
     pub available_cycles: u16,
     pub vic_stolen_cycles: u16,
@@ -222,11 +223,11 @@ pub struct RasterContract {
 }
 
 impl RasterContract {
-    pub const fn fits(self) -> bool {
+    pub const fn fits(&self) -> bool {
         self.max_cycles <= self.available_cycles as u64
     }
 
-    pub const fn margin(self) -> i64 {
+    pub const fn margin(&self) -> i64 {
         self.available_cycles as i64 - self.max_cycles as i64
     }
 }
