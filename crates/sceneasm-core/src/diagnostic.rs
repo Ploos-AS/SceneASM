@@ -34,16 +34,28 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    pub fn error(code: &'static str, message: impl Into<String>) -> Self {
+    pub fn new(code: &'static str, severity: Severity, message: impl Into<String>) -> Self {
         Self {
             code,
-            severity: Severity::Error,
+            severity,
             message: message.into(),
             primary: None,
             secondary: Vec::new(),
             notes: Vec::new(),
             timing: None,
         }
+    }
+
+    pub fn error(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(code, Severity::Error, message)
+    }
+
+    pub fn warning(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(code, Severity::Warning, message)
+    }
+
+    pub fn info(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(code, Severity::Info, message)
     }
 
     pub fn with_primary(mut self, span: SourceSpan, message: impl Into<String>) -> Self {
@@ -69,7 +81,7 @@ mod tests {
     #[test]
     fn structured_timing_diagnostic_keeps_editor_data() {
         let span = SourceSpan { file_id: 0, line: 37, column_start: 5, column_end: 17 };
-        let diagnostic = Diagnostic::error("C64_TIMING", "VIC-II stalls instruction")
+        let diagnostic = Diagnostic::info("C64_TIMING", "VIC-II stalls instruction")
             .with_primary(span.clone(), "instruction is stretched here")
             .with_note("consider moving work outside the badline window")
             .with_timing(TimingDiagnostic {
@@ -78,6 +90,7 @@ mod tests {
                 stalled_cycles: 3,
                 actual_cycles: 7,
             });
+        assert_eq!(diagnostic.severity, Severity::Info);
         assert_eq!(diagnostic.primary.unwrap().span, span);
         assert_eq!(diagnostic.timing.unwrap().actual_cycles, 7);
     }
