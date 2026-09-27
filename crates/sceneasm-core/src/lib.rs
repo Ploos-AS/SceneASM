@@ -85,7 +85,17 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
 
         if let Some(rest) = line.strip_prefix("* =").or_else(|| line.strip_prefix(".org")) {
             let value = parse_u16(rest.trim(), line_no)?;
-            if bytes.is_empty() { origin = value; pc = value; continue; }
+            if bytes.is_empty() {
+                origin = value;
+                pc = value;
+                continue;
+            }
+            if value < pc {
+                return Err(AssembleError::InvalidNumber { line: line_no, text: line.to_string() });
+            }
+            bytes.resize(bytes.len() + (value - pc) as usize, 0);
+            pc = value;
+            continue;
         }
 
         if line == "}" {
@@ -178,6 +188,17 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
                 return Err(AssembleError::AssertionFailed { line: line_no, expression: expression.to_string() });
             }
             continue;
+        }
+
+        if let Some(rest) = line.strip_prefix(".text") {
+            let text = rest.trim();
+            if text.len() >= 2 && text.starts_with('"') && text.ends_with('"') {
+                let payload = &text.as_bytes()[1..text.len()-1];
+                bytes.extend_from_slice(payload);
+                pc = pc.wrapping_add(payload.len() as u16);
+                continue;
+            }
+            return Err(AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() });
         }
 
         if let Some(rest) = line.strip_prefix(".byte") {
@@ -302,6 +323,13 @@ fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supports_text_and_forward_origin_gap() {
+        let out = assemble("* = $0801\n.byte 1,2\n.text \"AB\"\n* = $0808\n.byte 3\n", Target::c64()).unwrap();
+        assert_eq!(out.origin, 0x0801);
+        assert_eq!(out.bytes, vec![1,2,b'A',b'B',0,0,0,3]);
+    }
 
     #[test]
     fn c64scene_hello_raster_syntax_and_relative_branch() {
