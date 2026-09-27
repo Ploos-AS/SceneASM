@@ -98,7 +98,8 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
                 continue;
             }
             if line == "}" || (line.starts_with(".raster") && line.ends_with('{'))
-                || line.starts_with(".vic_display") || line.starts_with(".vic_yscroll") {
+                || line.starts_with(".vic_display") || line.starts_with(".vic_yscroll")
+                || line.starts_with(".vic_sprites") {
                 continue;
             }
             if let Some(rest) = line.strip_prefix(".assert") {
