@@ -34,6 +34,7 @@ pub struct SourceSpan {
 pub struct InstructionInfo {
     pub address: u16,
     pub source: SourceSpan,
+    pub expansion: source::ExpansionTrace,
     pub opcode: Opcode,
 }
 
@@ -274,6 +275,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         instructions.push(InstructionInfo {
             address,
             source: SourceSpan { file_id: 0, line: line_no, column_start, column_end },
+            expansion: source::ExpansionTrace::default(),
             opcode,
         });
     }
@@ -351,6 +353,7 @@ mod tests {
         let out = assemble("nop\n", Target::c64()).unwrap();
         assert_eq!(out.source_map.file(0).unwrap().name, "<input>");
         assert_eq!(out.instructions[0].source.file_id, 0);
+        assert!(out.instructions[0].expansion.frames.is_empty());
     }
 
     #[test]
