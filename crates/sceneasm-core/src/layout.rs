@@ -62,6 +62,19 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
                 pc = value;
                 continue;
             }
+            if !line.starts_with('.') {
+                if let Some((name, expression)) = line.split_once('=') {
+                    let name = name.trim();
+                    if name.chars().next().is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic()) {
+                        if let Some(value) = expr::eval(expression.trim(), &previous, line_no)? {
+                            if symbols.insert(name.to_string(), value).is_some() {
+                                return Err(AssembleError::DuplicateSymbol { line: line_no, name: name.to_string() });
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
             if let Some(label) = line.strip_suffix(':') {
                 let name = label.trim().to_string();
                 if symbols.insert(name.clone(), pc).is_some() {
@@ -76,6 +89,11 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
                     "all" => UndocumentedPolicy::All,
                     _ => return Err(AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() }),
                 };
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix(".assert") {
+                // Assertions are evaluated after layout converges.
+                let _ = rest;
                 continue;
             }
             if let Some(rest) = line.strip_prefix(".byte") {
