@@ -4,6 +4,7 @@ use thiserror::Error;
 
 pub mod opcodes;
 pub mod layout;
+pub mod expr;
 pub use opcodes::{
     opcode, opcode_by_byte, opcode_with_policy, AddressingMode, ExtraCycle, Opcode, OpcodeClass,
     UndocumentedPolicy, OPCODES, UNDOCUMENTED_OPCODES,
@@ -43,6 +44,8 @@ pub enum AssembleError {
     UnresolvedSymbol { line: usize, name: String },
     #[error("layout did not converge")]
     LayoutDidNotConverge,
+    #[error("invalid expression on line {line}: {text}")]
+    InvalidExpression { line: usize, text: String },
 }
 
 pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError> {
@@ -84,7 +87,8 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
 
         if let Some(rest) = line.strip_prefix(".byte") {
             for token in rest.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                let value = parse_u16(token, line_no)?;
+                let value = expr::eval(token, &symbols, line_no)?
+                    .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: token.to_string() })?;
                 if value > 0xff {
                     return Err(AssembleError::InvalidNumber { line: line_no, text: token.to_string() });
                 }
@@ -179,6 +183,12 @@ mod tests {
     fn undocumented_policy_can_be_selected_in_source() {
         let denied = assemble("lax ($20,x)\n", Target::c64());
         assert!(denied.is_err());
+    }
+
+    #[test]
+    fn low_high_byte_expressions_work_in_immediates() {
+        let out = assemble(".org $c000\nirq:\nlda #<irq\nldx #>irq\n", Target::c64()).unwrap();
+        assert_eq!(out.bytes, vec![0xa9, 0x00, 0xa2, 0xc0]);
     }
 
     #[test]
