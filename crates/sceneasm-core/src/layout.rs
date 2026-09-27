@@ -20,6 +20,9 @@ pub fn choose_mode(
     line: usize,
 ) -> Result<(AddressingMode, Option<u16>), AssembleError> {
     match operand {
+        None if opcode_with_policy(mnemonic, AddressingMode::Accumulator, policy).is_some()
+            && opcode_with_policy(mnemonic, AddressingMode::Implied, policy).is_none()
+            => Ok((AddressingMode::Accumulator, None)),
         None => Ok((AddressingMode::Implied, None)),
         Some(arg) if arg.starts_with('#') => {
             let value = resolve_value(arg.trim_start_matches('#').trim(), symbols, line)?;
@@ -27,6 +30,9 @@ pub fn choose_mode(
         }
         Some(arg) => {
             let value = resolve_value(arg, symbols, line)?;
+            if opcode_with_policy(mnemonic, AddressingMode::Relative, policy).is_some() {
+                return Ok((AddressingMode::Relative, value));
+            }
             let can_zp = opcode_with_policy(mnemonic, AddressingMode::ZeroPage, policy).is_some();
             let mode = if can_zp && value.is_some_and(|v| v <= 0xff) {
                 AddressingMode::ZeroPage
@@ -55,7 +61,7 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
             let line = raw.split(';').next().unwrap_or("").trim();
             if line.is_empty() { continue; }
 
-            if let Some(rest) = line.strip_prefix(".org") {
+            if let Some(rest) = line.strip_prefix("* =").or_else(|| line.strip_prefix(".org")) {
                 let value = resolve_value(rest.trim(), &previous, line_no)?
                     .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: rest.trim().to_string() })?;
                 current_origin = value;
