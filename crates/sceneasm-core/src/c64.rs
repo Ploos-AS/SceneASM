@@ -72,6 +72,63 @@ impl BusMap {
     }
 }
 
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScheduledInstruction {
+    pub address: u16,
+    pub nominal_cycles: u16,
+    pub start_cycle: u16,
+    pub end_cycle: u16,
+    pub stalled_cycles: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuSchedule {
+    pub instructions: Vec<ScheduledInstruction>,
+    pub end_cycle: u16,
+    pub stalled_cycles: u16,
+}
+
+impl BusMap {
+    pub fn schedule(&self, instructions: &[crate::InstructionInfo]) -> CpuSchedule {
+        let mut cycle = 0usize;
+        let mut total_stalls = 0u16;
+        let mut scheduled = Vec::new();
+
+        for instruction in instructions {
+            let start = cycle as u16;
+            let nominal = instruction.opcode.cycles as usize;
+            let mut executed = 0usize;
+            let mut stalls = 0u16;
+
+            while executed < nominal && cycle < self.slots.len() {
+                match self.slots[cycle] {
+                    BusOwner::Cpu => executed += 1,
+                    _ => {
+                        stalls += 1;
+                        total_stalls += 1;
+                    }
+                }
+                cycle += 1;
+            }
+
+            scheduled.push(ScheduledInstruction {
+                address: instruction.address,
+                nominal_cycles: nominal as u16,
+                start_cycle: start,
+                end_cycle: cycle as u16,
+                stalled_cycles: stalls,
+            });
+        }
+
+        CpuSchedule {
+            instructions: scheduled,
+            end_cycle: cycle as u16,
+            stalled_cycles: total_stalls,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VicLineTiming {
     pub badline: bool,
@@ -196,6 +253,22 @@ mod tests {
         let normal = timing.vic_line(0x31, state).unwrap();
         assert!(!normal.badline);
         assert_eq!(normal.cpu_available_cycles, 63);
+    }
+
+    #[test]
+    fn bus_map_stalls_cpu_instruction_timeline() {
+        let mut bus = BusMap { slots: vec![BusOwner::Cpu; 12] };
+        bus.slots[2] = BusOwner::Badline;
+        bus.slots[3] = BusOwner::Badline;
+        let instructions = vec![
+            crate::InstructionInfo { address: 0x1000, opcode: crate::opcode("LDA", crate::AddressingMode::Immediate).unwrap() },
+            crate::InstructionInfo { address: 0x1002, opcode: crate::opcode("RTS", crate::AddressingMode::Implied).unwrap() },
+        ];
+        let schedule = bus.schedule(&instructions);
+        assert_eq!(schedule.instructions[0].end_cycle, 2);
+        assert_eq!(schedule.instructions[1].stalled_cycles, 2);
+        assert_eq!(schedule.instructions[1].end_cycle, 10);
+        assert_eq!(schedule.stalled_cycles, 2);
     }
 
     #[test]
