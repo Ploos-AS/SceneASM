@@ -111,6 +111,14 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
                 pc = pc.wrapping_add(rest.split(',').filter(|s| !s.trim().is_empty()).count() as u16);
                 continue;
             }
+            if let Some(rest) = line.strip_prefix(".text") {
+                let text = rest.trim();
+                if text.len() >= 2 && text.starts_with('"') && text.ends_with('"') {
+                    pc = pc.wrapping_add((text.len() - 2) as u16);
+                    continue;
+                }
+                return Err(AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() });
+            }
 
             let upper = line.to_ascii_uppercase();
             let (mnemonic, operand) = if let Some((m, _)) = upper.split_once(' ') {
