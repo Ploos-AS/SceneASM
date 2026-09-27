@@ -275,6 +275,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             line: raster_line,
             scheduled_end_cycle: schedule.end_cycle,
             scheduled_stall_cycles: schedule.stalled_cycles,
+            schedule: schedule.instructions,
             line_cycles: profile.cycles_per_line,
             available_cycles: vic.cpu_available_cycles,
             vic_stolen_cycles: vic.vic_stolen_cycles,
@@ -391,7 +392,7 @@ mod tests {
     #[test]
     fn raster_contract_accounts_for_pal_badline() {
         let out = assemble(".raster 51 {\nnop\n}\n", Target::c64()).unwrap();
-        let contract = out.raster_contracts[0];
+        let contract = &out.raster_contracts[0];
         assert!(contract.badline);
         assert_eq!(contract.line_cycles, 63);
         assert_eq!(contract.vic_stolen_cycles, 40);
@@ -399,6 +400,8 @@ mod tests {
         assert_eq!(contract.margin(), 21);
         assert_eq!(contract.scheduled_end_cycle, 2);
         assert_eq!(contract.scheduled_stall_cycles, 0);
+        assert_eq!(contract.schedule.len(), 1);
+        assert_eq!(contract.schedule[0].address, out.instructions[1].address);
     }
 
     #[test]
@@ -408,10 +411,22 @@ mod tests {
         for _ in 0..8 { owned.push_str("nop\n"); }
         owned.push_str("}\n");
         let out = assemble(&owned, Target::c64()).unwrap();
-        let contract = out.raster_contracts[0];
+        let contract = &out.raster_contracts[0];
         assert!(contract.badline);
         assert!(contract.scheduled_stall_cycles > 0);
         assert!(contract.scheduled_end_cycle > contract.min_cycles as u16);
+    }
+
+    #[test]
+    fn raster_contract_keeps_per_instruction_schedule() {
+        let out = assemble(".vic_display off\n.raster 100 {\nlda #1\nnop\nrts\n}\n", Target::c64()).unwrap();
+        let contract = &out.raster_contracts[0];
+        assert_eq!(contract.schedule.len(), 3);
+        assert_eq!(contract.schedule[0].nominal_cycles, 2);
+        assert_eq!(contract.schedule[0].start_cycle, 0);
+        assert_eq!(contract.schedule[0].end_cycle, 2);
+        assert_eq!(contract.schedule[1].start_cycle, 2);
+        assert_eq!(contract.schedule[2].end_cycle, 10);
     }
 
     #[test]
@@ -431,7 +446,7 @@ mod tests {
     #[test]
     fn sprite_dma_reduces_raster_budget() {
         let out = assemble(".vic_display off\n.vic_sprites 7\n.vic_sprite_y 0 90\n.vic_sprite_y 1 90\n.vic_sprite_y 2 90\n.raster 100 {\nnop\n}\n", Target::c64()).unwrap();
-        let contract = out.raster_contracts[0];
+        let contract = &out.raster_contracts[0];
         assert_eq!(contract.active_sprites, 3);
         assert_eq!(contract.sprite_stolen_cycles, 6);
         assert_eq!(contract.vic_stolen_cycles, 6);
