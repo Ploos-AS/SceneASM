@@ -193,14 +193,20 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
     for (source_line, raster_line, start) in raster_blocks {
         let range = timing::analyze(&instructions[start..]);
         let profile = c64::C64Timing::pal();
-        let budget = profile.line_budget(raster_line)
+        let vic = profile.vic_line(raster_line, c64::VicState::default())
             .ok_or(AssembleError::InvalidRasterLine { source_line, raster_line })?;
         let contract = c64::RasterContract {
-            line: raster_line, available_cycles: budget, min_cycles: range.min, max_cycles: range.max,
+            line: raster_line,
+            line_cycles: profile.cycles_per_line,
+            available_cycles: vic.cpu_available_cycles,
+            vic_stolen_cycles: vic.vic_stolen_cycles,
+            badline: vic.badline,
+            min_cycles: range.min,
+            max_cycles: range.max,
         };
         if !contract.fits() {
             return Err(AssembleError::RasterBudgetExceeded {
-                source_line, raster_line, actual: range.max, budget,
+                source_line, raster_line, actual: range.max, budget: vic.cpu_available_cycles,
             });
         }
         raster_contracts.push(contract);
@@ -286,9 +292,22 @@ mod tests {
         let out = assemble("sei\n.raster 100 {\nnop\nrts\n}\n", Target::c64()).unwrap();
         assert_eq!(out.raster_contracts.len(), 1);
         assert_eq!(out.raster_contracts[0].available_cycles, 63);
+        assert_eq!(out.raster_contracts[0].vic_stolen_cycles, 0);
+        assert!(!out.raster_contracts[0].badline);
         assert_eq!(out.raster_contracts[0].min_cycles, 8);
         assert_eq!(out.raster_contracts[0].max_cycles, 8);
         assert!(out.raster_contracts[0].fits());
+    }
+
+    #[test]
+    fn raster_contract_accounts_for_pal_badline() {
+        let out = assemble(".raster 51 {\nnop\n}\n", Target::c64()).unwrap();
+        let contract = out.raster_contracts[0];
+        assert!(contract.badline);
+        assert_eq!(contract.line_cycles, 63);
+        assert_eq!(contract.vic_stolen_cycles, 40);
+        assert_eq!(contract.available_cycles, 23);
+        assert_eq!(contract.margin(), 21);
     }
 
     #[test]
