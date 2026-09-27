@@ -1,0 +1,5 @@
+/target
+*.prg
+*.d64
+*.crt
+.vscode/
