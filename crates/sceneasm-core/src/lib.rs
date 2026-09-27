@@ -3,33 +3,49 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cpu {
-    Mos6502,
-    Mos6510,
-}
+pub enum Cpu { Mos6502, Mos6510 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Target {
-    pub name: &'static str,
-    pub cpu: Cpu,
-    pub origin: u16,
-}
+pub struct Target { pub name: &'static str, pub cpu: Cpu, pub origin: u16 }
 
 impl Target {
-    pub const fn c64() -> Self {
-        Self {
-            name: "c64",
-            cpu: Cpu::Mos6510,
-            origin: 0x0801,
-        }
-    }
+    pub const fn c64() -> Self { Self { name: "c64", cpu: Cpu::Mos6510, origin: 0x0801 } }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressingMode { Implied, Immediate, Absolute }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Opcode {
+    pub mnemonic: &'static str,
+    pub mode: AddressingMode,
+    pub code: u8,
+    pub bytes: u8,
+    pub cycles: u8,
+    pub undocumented: bool,
+}
+
+pub const OPCODES: &[Opcode] = &[
+    Opcode { mnemonic: "BRK", mode: AddressingMode::Implied, code: 0x00, bytes: 1, cycles: 7, undocumented: false },
+    Opcode { mnemonic: "JMP", mode: AddressingMode::Absolute, code: 0x4c, bytes: 3, cycles: 3, undocumented: false },
+    Opcode { mnemonic: "CLI", mode: AddressingMode::Implied, code: 0x58, bytes: 1, cycles: 2, undocumented: false },
+    Opcode { mnemonic: "RTS", mode: AddressingMode::Implied, code: 0x60, bytes: 1, cycles: 6, undocumented: false },
+    Opcode { mnemonic: "SEI", mode: AddressingMode::Implied, code: 0x78, bytes: 1, cycles: 2, undocumented: false },
+    Opcode { mnemonic: "STA", mode: AddressingMode::Absolute, code: 0x8d, bytes: 3, cycles: 4, undocumented: false },
+    Opcode { mnemonic: "LDA", mode: AddressingMode::Immediate, code: 0xa9, bytes: 2, cycles: 2, undocumented: false },
+    Opcode { mnemonic: "NOP", mode: AddressingMode::Implied, code: 0xea, bytes: 1, cycles: 2, undocumented: false },
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstructionInfo { pub address: u16, pub opcode: Opcode }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assembly {
     pub bytes: Vec<u8>,
     pub symbols: BTreeMap<String, u16>,
     pub origin: u16,
+    pub instructions: Vec<InstructionInfo>,
+    pub cycles: u64,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -47,21 +63,17 @@ pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError>
     let mut pc = origin;
     let mut bytes = Vec::new();
     let mut symbols = BTreeMap::new();
+    let mut instructions = Vec::new();
+    let mut cycles = 0u64;
 
     for (index, raw) in source.lines().enumerate() {
         let line_no = index + 1;
         let line = raw.split(';').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
+        if line.is_empty() { continue; }
 
         if let Some(rest) = line.strip_prefix(".org") {
             let value = parse_u16(rest.trim(), line_no)?;
-            if bytes.is_empty() {
-                origin = value;
-                pc = value;
-                continue;
-            }
+            if bytes.is_empty() { origin = value; pc = value; continue; }
         }
 
         if let Some(label) = line.strip_suffix(':') {
@@ -76,10 +88,7 @@ pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError>
             for token in rest.split(',').map(str::trim).filter(|s| !s.is_empty()) {
                 let value = parse_u16(token, line_no)?;
                 if value > 0xff {
-                    return Err(AssembleError::InvalidNumber {
-                        line: line_no,
-                        text: token.to_string(),
-                    });
+                    return Err(AssembleError::InvalidNumber { line: line_no, text: token.to_string() });
                 }
                 bytes.push(value as u8);
                 pc = pc.wrapping_add(1);
@@ -88,45 +97,38 @@ pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError>
         }
 
         let upper = line.to_ascii_uppercase();
-        match upper.as_str() {
-            "SEI" => emit(&mut bytes, &mut pc, &[0x78]),
-            "CLI" => emit(&mut bytes, &mut pc, &[0x58]),
-            "NOP" => emit(&mut bytes, &mut pc, &[0xea]),
-            "RTS" => emit(&mut bytes, &mut pc, &[0x60]),
-            "BRK" => emit(&mut bytes, &mut pc, &[0x00]),
-            _ if upper.starts_with("LDA #") => {
-                let arg = line[5..].trim();
+        let (mnemonic, mode, operand) = if let Some((m, arg)) = upper.split_once(' ') {
+            let original_arg = line.split_once(' ').map(|(_, a)| a.trim()).unwrap_or("");
+            (m, if arg.trim_start().starts_with('#') { AddressingMode::Immediate } else { AddressingMode::Absolute }, Some(original_arg))
+        } else {
+            (upper.as_str(), AddressingMode::Implied, None)
+        };
+
+        let opcode = OPCODES.iter().copied().find(|op| op.mnemonic == mnemonic && op.mode == mode)
+            .ok_or_else(|| AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() })?;
+
+        let address = pc;
+        bytes.push(opcode.code);
+        match mode {
+            AddressingMode::Implied => {}
+            AddressingMode::Immediate => {
+                let arg = operand.unwrap().trim_start_matches('#').trim();
                 let value = parse_u16(arg, line_no)?;
-                if value > 0xff {
-                    return Err(AssembleError::InvalidNumber { line: line_no, text: arg.into() });
-                }
-                emit(&mut bytes, &mut pc, &[0xa9, value as u8]);
+                if value > 0xff { return Err(AssembleError::InvalidNumber { line: line_no, text: arg.into() }); }
+                bytes.push(value as u8);
             }
-            _ if upper.starts_with("STA ") => {
-                let arg = line[4..].trim();
-                let addr = parse_u16(arg, line_no)?;
-                emit(&mut bytes, &mut pc, &[0x8d, addr as u8, (addr >> 8) as u8]);
-            }
-            _ if upper.starts_with("JMP ") => {
-                let arg = line[4..].trim();
-                let addr = parse_u16(arg, line_no)?;
-                emit(&mut bytes, &mut pc, &[0x4c, addr as u8, (addr >> 8) as u8]);
-            }
-            _ => {
-                return Err(AssembleError::UnsupportedStatement {
-                    line: line_no,
-                    text: line.to_string(),
-                })
+            AddressingMode::Absolute => {
+                let arg = operand.unwrap();
+                let value = parse_u16(arg, line_no)?;
+                bytes.extend_from_slice(&[value as u8, (value >> 8) as u8]);
             }
         }
+        pc = pc.wrapping_add(opcode.bytes as u16);
+        cycles += opcode.cycles as u64;
+        instructions.push(InstructionInfo { address, opcode });
     }
 
-    Ok(Assembly { bytes, symbols, origin })
-}
-
-fn emit(bytes: &mut Vec<u8>, pc: &mut u16, data: &[u8]) {
-    bytes.extend_from_slice(data);
-    *pc = pc.wrapping_add(data.len() as u16);
+    Ok(Assembly { bytes, symbols, origin, instructions, cycles })
 }
 
 fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
@@ -138,11 +140,7 @@ fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
     } else {
         text.parse::<u16>()
     };
-
-    parsed.map_err(|_| AssembleError::InvalidNumber {
-        line,
-        text: text.to_string(),
-    })
+    parsed.map_err(|_| AssembleError::InvalidNumber { line, text: text.to_string() })
 }
 
 #[cfg(test)]
@@ -150,15 +148,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn assembles_minimal_c64_code() {
-        let out = assemble(
-            ".org $080d\nstart:\n  sei\n  lda #$06\n  sta $d020\n  rts\n",
-            Target::c64(),
-        )
-        .unwrap();
-
+    fn assembles_minimal_c64_code_and_tracks_cycles() {
+        let out = assemble(".org $080d\nstart:\n  sei\n  lda #$06\n  sta $d020\n  rts\n", Target::c64()).unwrap();
         assert_eq!(out.origin, 0x080d);
         assert_eq!(out.symbols["start"], 0x080d);
         assert_eq!(out.bytes, vec![0x78, 0xa9, 0x06, 0x8d, 0x20, 0xd0, 0x60]);
+        assert_eq!(out.cycles, 14);
+        assert_eq!(out.instructions.len(), 4);
+        assert_eq!(out.instructions[2].address, 0x0810);
+    }
+
+    #[test]
+    fn opcode_metadata_is_available_to_tooling() {
+        let sei = OPCODES.iter().find(|op| op.mnemonic == "SEI").unwrap();
+        assert_eq!(sei.cycles, 2);
+        assert!(!sei.undocumented);
     }
 }
