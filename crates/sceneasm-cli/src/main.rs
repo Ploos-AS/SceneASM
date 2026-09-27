@@ -19,6 +19,9 @@ enum Command {
         output: Option<PathBuf>,
         #[arg(long, default_value = "c64")]
         target: String,
+        /// Write deterministic symbol map (name = $hhhh).
+        #[arg(long)]
+        symbols: Option<PathBuf>,
     },
     Check {
         input: PathBuf,
@@ -30,7 +33,7 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Build { input, output, target } => {
+        Command::Build { input, output, target, symbols } => {
             let target = parse_target(&target)?;
             let source = fs::read_to_string(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
@@ -42,6 +45,17 @@ fn main() -> Result<()> {
             prg.extend_from_slice(&assembly.bytes);
             fs::write(&output, prg)
                 .with_context(|| format!("writing {}", output.display()))?;
+
+            if let Some(symbols_path) = symbols {
+                let mut entries: Vec<_> = assembly.symbols.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                let mut text = String::new();
+                for (name, value) in entries {
+                    text.push_str(&format!("{name} = ${value:04x}\n"));
+                }
+                fs::write(&symbols_path, text)
+                    .with_context(|| format!("writing {}", symbols_path.display()))?;
+            }
 
             println!(
                 "built {} bytes at ${:04x} -> {}",
