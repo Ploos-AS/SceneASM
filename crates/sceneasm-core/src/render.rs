@@ -11,7 +11,8 @@ pub fn render(diagnostic: &Diagnostic, sources: &SourceMap) -> String {
     let mut out = format!("{severity}[{}]: {}", diagnostic.code, diagnostic.message);
 
     if let Some(primary) = &diagnostic.primary {
-        let file = sources.file(primary.span.file_id)
+        let file = sources
+            .file(primary.span.file_id)
             .map(|file| file.name.as_str())
             .unwrap_or("<unknown>");
         out.push_str(&format!(
@@ -48,7 +49,12 @@ mod tests {
         let sources = SourceMap::new("demo.asm");
         let diagnostic = Diagnostic::info("C64_VIC_STALL", "VIC-II stalls instruction")
             .with_primary(
-                SourceSpan { file_id: 0, line: 37, column_start: 5, column_end: 17 },
+                SourceSpan {
+                    file_id: 0,
+                    line: 37,
+                    column_start: 5,
+                    column_end: 17,
+                },
                 "instruction stalls here",
             )
             .with_timing(TimingDiagnostic {
