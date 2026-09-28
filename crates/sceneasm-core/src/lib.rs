@@ -5,10 +5,10 @@ use thiserror::Error;
 pub mod c64;
 pub mod c64_registers;
 pub mod diagnostic;
-pub mod render;
 pub mod expr;
 pub mod layout;
 pub mod opcodes;
+pub mod render;
 pub mod source;
 pub mod timing;
 pub use opcodes::{
