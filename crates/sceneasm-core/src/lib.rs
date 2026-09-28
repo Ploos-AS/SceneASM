@@ -42,6 +42,7 @@ pub struct InstructionInfo {
 pub struct Assembly {
     pub bytes: Vec<u8>,
     pub symbols: BTreeMap<String, u16>,
+    pub symbol_definitions: BTreeMap<String, SourceSpan>,
     pub origin: u16,
     pub instructions: Vec<InstructionInfo>,
     pub cycles: u64,
@@ -99,6 +100,27 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
     let mut pc = origin;
     let mut bytes = Vec::new();
     let symbols = resolved.symbols;
+    let mut symbol_definitions = BTreeMap::new();
+    for (index, raw) in source.lines().enumerate() {
+        let code = raw.split(';').next().unwrap_or("");
+        let trimmed = code.trim();
+        let name = if let Some(label) = trimmed.strip_suffix(':') {
+            Some(label.trim())
+        } else if !trimmed.starts_with('.') {
+            trimmed.split_once('=').map(|(name, _)| name.trim())
+        } else {
+            None
+        };
+        if let Some(name) = name.filter(|name| symbols.contains_key(*name)) {
+            let column_start = raw.find(name).unwrap_or(0) + 1;
+            symbol_definitions.insert(name.to_string(), SourceSpan {
+                file_id: 0,
+                line: index + 1,
+                column_start,
+                column_end: column_start + name.len(),
+            });
+        }
+    }
     let mut instructions = Vec::new();
     let mut cycles = 0u64;
     let mut raster_blocks: Vec<(usize, u16, usize, usize, c64::VicState)> = Vec::new();
@@ -403,7 +425,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         }
     }
 
-    Ok(Assembly { bytes, symbols, origin, instructions, cycles, cycle_range, raster_contracts, source_map, diagnostics })
+    Ok(Assembly { bytes, symbols, symbol_definitions, origin, instructions, cycles, cycle_range, raster_contracts, source_map, diagnostics })
 }
 
 fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
