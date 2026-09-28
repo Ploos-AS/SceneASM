@@ -942,6 +942,12 @@ mod tests {
     }
 
     #[test]
+    fn relative_branch_accepts_current_pc_expression() {
+        let out = assemble(".org $c000\nbeq *+2\nnop\n", Target::c64()).unwrap();
+        assert_eq!(out.bytes, vec![0xf0, 0x00, 0xea]);
+    }
+
+    #[test]
     fn forward_reference_can_shrink_to_zero_page() {
         let out = assemble(
             ".org $0020\nlda table\nnop\ntable:\n.byte 1\n",
