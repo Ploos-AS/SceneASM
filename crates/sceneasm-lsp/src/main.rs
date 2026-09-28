@@ -221,7 +221,7 @@ impl LanguageServer for Backend {
                 ..CompletionItem::default()
             });
         }
-        for register in sceneasm_core::c64_registers::VIC_REGISTERS {
+        for register in sceneasm_core::c64_registers::registers() {
             items.push(CompletionItem {
                 label: register.name.into(),
                 kind: Some(CompletionItemKind::VALUE),
