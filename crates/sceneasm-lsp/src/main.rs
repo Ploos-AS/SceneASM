@@ -536,7 +536,6 @@ impl LanguageServer for Backend {
                     SymbolKind::CONSTANT
                 },
                 tags: None,
-                deprecated: None,
                 range,
                 selection_range: range,
                 children: None,
