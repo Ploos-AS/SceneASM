@@ -203,6 +203,15 @@ impl LanguageServer for Backend {
                 ..CompletionItem::default()
             });
         }
+        for register in sceneasm_core::c64_registers::VIC_REGISTERS {
+            items.push(CompletionItem {
+                label: register.name.into(),
+                kind: Some(CompletionItemKind::VALUE),
+                detail: Some(format!("${:04x} — {}", register.address, register.description)),
+                insert_text: Some(format!("${:04x}", register.address)),
+                ..CompletionItem::default()
+            });
+        }
         if let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) {
             for (name, value) in &assembly.symbols {
                 let is_label = assembly.symbol_definitions.get(name).is_some_and(|span| {
