@@ -129,10 +129,17 @@ impl LanguageServer for Backend {
         let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
         let name = &line[start..end];
         if let Some(register) = sceneasm_core::c64_registers::register_by_name(name) {
-            let value = format!(
-                "**{}** — VIC-II register  \\nAddress: `${:04x}`  \\n{}",
+            let mut value = format!(
+                "**{}** — C64 hardware register  \\nAddress: `${:04x}`  \\n{}",
                 register.name, register.address, register.description
             );
+            let fields: Vec<_> = sceneasm_core::c64_registers::bit_fields(register.address).collect();
+            if !fields.is_empty() {
+                value.push_str("\\n\\n**Bits**");
+                for field in fields {
+                    value.push_str(&format!("\\n- `{}` **{}** — {}", field.bits, field.name, field.description));
+                }
+            }
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
                 range: Some(Range {
@@ -758,10 +765,17 @@ async fn main() {
 ) {
             if let Ok(address) = u16::from_str_radix(hex, 16) {
                 if let Some(register) = sceneasm_core::c64_registers::register_by_address(address) {
-                    let value = format!(
-                        "**{}** — VIC-II register  \\nAddress: `${:04x}`  \\n{}",
+                    let mut value = format!(
+                        "**{}** — C64 hardware register  \\nAddress: `${:04x}`  \\n{}",
                         register.name, register.address, register.description
                     );
+                    let fields: Vec<_> = sceneasm_core::c64_registers::bit_fields(register.address).collect();
+                    if !fields.is_empty() {
+                        value.push_str("\\n\\n**Bits**");
+                        for field in fields {
+                            value.push_str(&format!("\\n- `{}` **{}** — {}", field.bits, field.name, field.description));
+                        }
+                    }
                     return Ok(Some(Hover {
                         contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
                         range: None,
