@@ -404,10 +404,10 @@ pub fn assemble_with_policy(
             line_no,
             pc,
         )?;
-        if operand.is_some() && operand_value.is_none() {
+        if let (Some(operand), None) = (operand, operand_value) {
             return Err(AssembleError::UnresolvedSymbol {
                 line: line_no,
-                name: operand.unwrap().trim_start_matches('#').trim().to_string(),
+                name: operand.trim_start_matches('#').trim().to_string(),
             });
         }
 
@@ -620,24 +620,11 @@ pub fn assemble_with_policy(
                 }
             }
             ("STA", _) => {}
-            (mnemonic, _)
-                if matches!(
-                    mnemonic,
-                    "ADC"
-                        | "AND"
-                        | "ASL"
-                        | "EOR"
-                        | "LAX"
-                        | "LDA"
-                        | "LSR"
-                        | "ORA"
-                        | "PLA"
-                        | "ROL"
-                        | "ROR"
-                        | "SBC"
-                        | "TXA"
-                        | "TYA"
-                ) =>
+            (
+                "ADC" | "AND" | "ASL" | "EOR" | "LAX" | "LDA" | "LSR" | "ORA" | "PLA"
+                | "ROL" | "ROR" | "SBC" | "TXA" | "TYA",
+                _,
+            ) =>
             {
                 known_a = None
             }
