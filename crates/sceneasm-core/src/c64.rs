@@ -155,15 +155,11 @@ pub struct VicLineTiming {
 
 impl C64Timing {
     pub fn vic_line(self, raster_line: u16, state: VicState) -> Option<VicLineTiming> {
-        let total = match self.line_budget(raster_line) {
-            Some(v) => v,
-            None => return None,
-        };
+        let total = self.line_budget(raster_line)?;
         // Badline condition for the normal display window. The VIC-II performs
         // 40 character-matrix fetches, taking 40 CPU bus cycles.
         let badline = state.display_enabled
-            && raster_line >= 0x30
-            && raster_line <= 0xf7
+            && (0x30..=0xf7).contains(&raster_line)
             && (raster_line & 7) == (state.y_scroll as u16 & 7);
         let badline_stolen = if badline { 40 } else { 0 };
         let mut sprite_dma_mask = 0u8;
