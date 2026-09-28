@@ -53,12 +53,12 @@ pub enum UndocumentedPolicy {
 
 impl UndocumentedPolicy {
     pub const fn allows(self, class: OpcodeClass) -> bool {
-        match (self, class) {
-            (_, OpcodeClass::Documented) => true,
-            (Self::Stable | Self::All, OpcodeClass::StableUndocumented) => true,
-            (Self::All, OpcodeClass::UnstableUndocumented) => true,
-            _ => false,
-        }
+        matches!(
+            (self, class),
+            (_, OpcodeClass::Documented)
+                | (Self::Stable | Self::All, OpcodeClass::StableUndocumented)
+                | (Self::All, OpcodeClass::UnstableUndocumented)
+        )
     }
 }
 
