@@ -3,6 +3,7 @@ on:
   workflow_dispatch:
   push:
     paths:
+      - "crates/**/*.rs"
       - ".github/workflows/rustfmt-repair.yml"
 
 permissions:
