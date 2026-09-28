@@ -397,7 +397,7 @@ pub fn assemble_with_policy(
         };
 
         let (mode, operand_value) =
-            layout::choose_mode(mnemonic, operand, &symbols, undocumented_policy, line_no)?;
+            layout::choose_mode(mnemonic, operand, &symbols, undocumented_policy, line_no, pc)?;
         if operand.is_some() && operand_value.is_none() {
             return Err(AssembleError::UnresolvedSymbol {
                 line: line_no,
