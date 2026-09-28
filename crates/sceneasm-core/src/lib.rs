@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
+mod diagnostic;
+mod source;
 pub mod c64;
 pub mod c64_registers;
 pub mod expr;
@@ -70,6 +72,8 @@ pub struct Assembly {
     pub cycle_range: timing::CycleRange,
     pub raster_contracts: Vec<c64::RasterContract>,
     pub hardware_writes: Vec<HardwareWrite>,
+    pub source_map: source::SourceMap,
+    pub diagnostics: Vec<diagnostic::Diagnostic>,
 }
 
 impl Assembly {
@@ -170,6 +174,8 @@ pub fn assemble_with_policy(
     }
     let mut instructions = Vec::new();
     let mut cycles = 0u64;
+    let source_map = source::SourceMap::default();
+    let mut diagnostics = Vec::new();
     let mut raster_blocks: Vec<(usize, u16, usize, usize, c64::VicState)> = Vec::new();
     let mut open_raster: Option<(usize, u16, usize, c64::VicState)> = None;
     let mut vic_state = c64::VicState::default();
@@ -667,7 +673,6 @@ fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
 mod tests {
     use super::*;
 
-    #[test]
     #[test]
     fn tracks_known_immediate_accumulator_write_to_hardware() {
         let assembly = assemble("lda #$1b\nsta $d011\n", Target::c64()).unwrap();
