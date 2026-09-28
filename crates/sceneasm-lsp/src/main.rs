@@ -58,6 +58,7 @@ impl LanguageServer for Backend {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -73,6 +74,39 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let position = params.text_document_position_params.position;
+        let uri = params.text_document_position_params.text_document.uri;
+        let Ok(path) = uri.to_file_path() else { return Ok(None); };
+        let Ok(text) = std::fs::read_to_string(path) else { return Ok(None); };
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let line = position.line as usize + 1;
+        let Some(instruction) = assembly.instructions.iter().find(|instruction| {
+            instruction.source.line == line
+                && position.character as usize + 1 >= instruction.source.column_start
+                && position.character as usize + 1 <= instruction.source.column_end
+        }) else { return Ok(None); };
+        let extra = match instruction.opcode.extra_cycle {
+            sceneasm_core::ExtraCycle::None => 0,
+            sceneasm_core::ExtraCycle::PageCross | sceneasm_core::ExtraCycle::BranchTaken => 1,
+            sceneasm_core::ExtraCycle::BranchTakenAndPageCross => 2,
+        };
+        let base = instruction.opcode.cycles as u16;
+        let worst = base + extra;
+        let value = format!(
+            "**{}**  \\nAddress: `${:04x}`  \\nMode: `{:?}`  \\nCycles: **{}**{}",
+            instruction.opcode.mnemonic,
+            instruction.address,
+            instruction.opcode.mode,
+            base,
+            if worst == base { String::new() } else { format!("–{}", worst) }
+        );
+        Ok(Some(Hover {
+            contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
+            range: None,
+        }))
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
