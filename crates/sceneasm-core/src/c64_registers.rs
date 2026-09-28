@@ -27,12 +27,68 @@ pub const VIC_REGISTERS: &[HardwareRegister] = &[
     HardwareRegister { name: "VIC_BACKGROUND3", address: 0xd024, description: "Background color 3" },
 ];
 
+pub const SID_REGISTERS: &[HardwareRegister] = &[
+    HardwareRegister { name: "SID_V1_FREQ_LO", address: 0xd400, description: "Voice 1 frequency low byte" },
+    HardwareRegister { name: "SID_V1_FREQ_HI", address: 0xd401, description: "Voice 1 frequency high byte" },
+    HardwareRegister { name: "SID_V1_PW_LO", address: 0xd402, description: "Voice 1 pulse width low byte" },
+    HardwareRegister { name: "SID_V1_PW_HI", address: 0xd403, description: "Voice 1 pulse width high nibble" },
+    HardwareRegister { name: "SID_V1_CTRL", address: 0xd404, description: "Voice 1 control and waveform register" },
+    HardwareRegister { name: "SID_V1_AD", address: 0xd405, description: "Voice 1 attack and decay" },
+    HardwareRegister { name: "SID_V1_SR", address: 0xd406, description: "Voice 1 sustain and release" },
+    HardwareRegister { name: "SID_V2_FREQ_LO", address: 0xd407, description: "Voice 2 frequency low byte" },
+    HardwareRegister { name: "SID_V2_FREQ_HI", address: 0xd408, description: "Voice 2 frequency high byte" },
+    HardwareRegister { name: "SID_V2_CTRL", address: 0xd40b, description: "Voice 2 control and waveform register" },
+    HardwareRegister { name: "SID_V3_FREQ_LO", address: 0xd40e, description: "Voice 3 frequency low byte" },
+    HardwareRegister { name: "SID_V3_FREQ_HI", address: 0xd40f, description: "Voice 3 frequency high byte" },
+    HardwareRegister { name: "SID_V3_CTRL", address: 0xd412, description: "Voice 3 control and waveform register" },
+    HardwareRegister { name: "SID_FC_LO", address: 0xd415, description: "Filter cutoff low bits" },
+    HardwareRegister { name: "SID_FC_HI", address: 0xd416, description: "Filter cutoff high byte" },
+    HardwareRegister { name: "SID_RES_FILT", address: 0xd417, description: "Filter resonance and voice routing" },
+    HardwareRegister { name: "SID_MODE_VOL", address: 0xd418, description: "Filter mode and master volume" },
+];
+
+pub const CIA1_REGISTERS: &[HardwareRegister] = &[
+    HardwareRegister { name: "CIA1_PRA", address: 0xdc00, description: "CIA1 port A data" },
+    HardwareRegister { name: "CIA1_PRB", address: 0xdc01, description: "CIA1 port B data" },
+    HardwareRegister { name: "CIA1_DDRA", address: 0xdc02, description: "CIA1 port A data direction" },
+    HardwareRegister { name: "CIA1_DDRB", address: 0xdc03, description: "CIA1 port B data direction" },
+    HardwareRegister { name: "CIA1_TA_LO", address: 0xdc04, description: "CIA1 timer A low byte" },
+    HardwareRegister { name: "CIA1_TA_HI", address: 0xdc05, description: "CIA1 timer A high byte" },
+    HardwareRegister { name: "CIA1_TB_LO", address: 0xdc06, description: "CIA1 timer B low byte" },
+    HardwareRegister { name: "CIA1_TB_HI", address: 0xdc07, description: "CIA1 timer B high byte" },
+    HardwareRegister { name: "CIA1_ICR", address: 0xdc0d, description: "CIA1 interrupt control/status" },
+    HardwareRegister { name: "CIA1_CRA", address: 0xdc0e, description: "CIA1 timer A control" },
+    HardwareRegister { name: "CIA1_CRB", address: 0xdc0f, description: "CIA1 timer B control" },
+];
+
+pub const CIA2_REGISTERS: &[HardwareRegister] = &[
+    HardwareRegister { name: "CIA2_PRA", address: 0xdd00, description: "CIA2 port A data; VIC-II bank selection uses bits 0-1" },
+    HardwareRegister { name: "CIA2_PRB", address: 0xdd01, description: "CIA2 port B data" },
+    HardwareRegister { name: "CIA2_DDRA", address: 0xdd02, description: "CIA2 port A data direction" },
+    HardwareRegister { name: "CIA2_DDRB", address: 0xdd03, description: "CIA2 port B data direction" },
+    HardwareRegister { name: "CIA2_TA_LO", address: 0xdd04, description: "CIA2 timer A low byte" },
+    HardwareRegister { name: "CIA2_TA_HI", address: 0xdd05, description: "CIA2 timer A high byte" },
+    HardwareRegister { name: "CIA2_TB_LO", address: 0xdd06, description: "CIA2 timer B low byte" },
+    HardwareRegister { name: "CIA2_TB_HI", address: 0xdd07, description: "CIA2 timer B high byte" },
+    HardwareRegister { name: "CIA2_ICR", address: 0xdd0d, description: "CIA2 interrupt control/status" },
+    HardwareRegister { name: "CIA2_CRA", address: 0xdd0e, description: "CIA2 timer A control" },
+    HardwareRegister { name: "CIA2_CRB", address: 0xdd0f, description: "CIA2 timer B control" },
+];
+
+pub fn registers() -> impl Iterator<Item = HardwareRegister> {
+    VIC_REGISTERS.iter()
+        .chain(SID_REGISTERS)
+        .chain(CIA1_REGISTERS)
+        .chain(CIA2_REGISTERS)
+        .copied()
+}
+
 pub fn register_by_name(name: &str) -> Option<HardwareRegister> {
-    VIC_REGISTERS.iter().copied().find(|register| register.name.eq_ignore_ascii_case(name))
+    registers().find(|register| register.name.eq_ignore_ascii_case(name))
 }
 
 pub fn register_by_address(address: u16) -> Option<HardwareRegister> {
-    VIC_REGISTERS.iter().copied().find(|register| register.address == address)
+    registers().find(|register| register.address == address)
 }
 
 #[cfg(test)]
