@@ -49,6 +49,20 @@ pub struct Assembly {
     pub raster_contracts: Vec<c64::RasterContract>,
 }
 
+impl Assembly {
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics.iter().any(|d| d.severity == diagnostic::Severity::Error)
+    }
+
+    pub fn errors(&self) -> impl Iterator<Item = &diagnostic::Diagnostic> {
+        self.diagnostics.iter().filter(|d| d.severity == diagnostic::Severity::Error)
+    }
+
+    pub fn warnings(&self) -> impl Iterator<Item = &diagnostic::Diagnostic> {
+        self.diagnostics.iter().filter(|d| d.severity == diagnostic::Severity::Warning)
+    }
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AssembleError {
     #[error("unsupported statement on line {line}: {text}")]
@@ -407,6 +421,18 @@ fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assembly_exposes_diagnostic_severity_views() {
+        let failed = assemble("lda $1234,x\nbne $10\n.assert_cycles <= 8\n", Target::c64()).unwrap();
+        assert!(failed.has_errors());
+        assert_eq!(failed.errors().count(), 1);
+        assert_eq!(failed.warnings().count(), 0);
+
+        let clean = assemble("nop\n", Target::c64()).unwrap();
+        assert!(!clean.has_errors());
+        assert_eq!(clean.errors().count(), 0);
+    }
 
     #[test]
     fn vic_stalls_emit_structured_source_diagnostics() {
