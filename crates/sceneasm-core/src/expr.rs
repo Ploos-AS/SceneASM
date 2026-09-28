@@ -12,6 +12,7 @@ enum Token {
     RParen,
     Low,
     High,
+    CurrentPc,
     Eq,
     Ne,
     Le,
@@ -23,12 +24,22 @@ pub fn eval(
     symbols: &BTreeMap<String, u16>,
     line: usize,
 ) -> Result<Option<u16>, AssembleError> {
+    eval_at(text, symbols, line, 0)
+}
+
+pub fn eval_at(
+    text: &str,
+    symbols: &BTreeMap<String, u16>,
+    line: usize,
+    pc: u16,
+) -> Result<Option<u16>, AssembleError> {
     let tokens = lex(text, line)?;
     let mut parser = Parser {
         tokens: &tokens,
         pos: 0,
         symbols,
         line,
+        pc,
     };
     let value = parser.expr()?;
     if parser.pos != tokens.len() {
@@ -140,6 +151,7 @@ struct Parser<'a> {
     pos: usize,
     symbols: &'a BTreeMap<String, u16>,
     line: usize,
+    pc: u16,
 }
 
 impl Parser<'_> {
@@ -217,6 +229,7 @@ impl Parser<'_> {
         self.pos += 1;
         match token {
             Token::Number(v) => Ok(Some(v)),
+            Token::CurrentPc => Ok(Some(self.pc)),
             Token::Ident(name) => Ok(self.symbols.get(&name).copied()),
             Token::LParen => {
                 let v = self.expr()?;
@@ -250,6 +263,13 @@ mod tests {
         assert_eq!(eval("<(irq + 1)", &symbols, 1).unwrap(), Some(0x24));
         assert_eq!(eval("table >= $2000", &symbols, 1).unwrap(), Some(1));
         assert_eq!(eval("table == irq", &symbols, 1).unwrap(), Some(0));
+    }
+
+    #[test]
+    fn current_pc_expression_uses_instruction_address() {
+        let symbols = BTreeMap::new();
+        assert_eq!(eval_at("*+2", &symbols, 1, 0x1234).unwrap(), Some(0x1236));
+        assert_eq!(eval_at("*-2", &symbols, 1, 0x1234).unwrap(), Some(0x1232));
     }
 
     #[test]
