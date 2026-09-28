@@ -7,6 +7,7 @@ pub mod layout;
 pub mod expr;
 pub mod timing;
 pub mod c64;
+pub mod c64_registers;
 pub use opcodes::{
     opcode, opcode_by_byte, opcode_with_policy, AddressingMode, ExtraCycle, Opcode, OpcodeClass,
     UndocumentedPolicy, OPCODES, UNDOCUMENTED_OPCODES,
