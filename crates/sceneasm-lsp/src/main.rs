@@ -89,30 +89,58 @@ impl LanguageServer for Backend {
             text.clone()
         };
         let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
-        let line = position.line as usize + 1;
-        let Some(instruction) = assembly.instructions.iter().find(|instruction| {
-            instruction.source.line == line
-                && position.character as usize + 1 >= instruction.source.column_start
-                && position.character as usize + 1 <= instruction.source.column_end
-        }) else { return Ok(None); };
-        let extra = match instruction.opcode.extra_cycle {
-            sceneasm_core::ExtraCycle::None => 0,
-            sceneasm_core::ExtraCycle::PageCross | sceneasm_core::ExtraCycle::BranchTaken => 1,
-            sceneasm_core::ExtraCycle::BranchTakenAndPageCross => 2,
+        let line_no = position.line as usize + 1;
+        let column = position.character as usize + 1;
+
+        if let Some(instruction) = assembly.instructions.iter().find(|instruction| {
+            instruction.source.line == line_no
+                && column >= instruction.source.column_start
+                && column <= instruction.source.column_end
+        }) {
+            let extra = match instruction.opcode.extra_cycle {
+                sceneasm_core::ExtraCycle::None => 0,
+                sceneasm_core::ExtraCycle::PageCross | sceneasm_core::ExtraCycle::BranchTaken => 1,
+                sceneasm_core::ExtraCycle::BranchTakenAndPageCross => 2,
+            };
+            let base = instruction.opcode.cycles as u16;
+            let worst = base + extra;
+            let value = format!(
+                "**{}**  \\nAddress: `${:04x}`  \\nMode: `{:?}`  \\nCycles: **{}**{}",
+                instruction.opcode.mnemonic,
+                instruction.address,
+                instruction.opcode.mode,
+                base,
+                if worst == base { String::new() } else { format!("–{}", worst) }
+            );
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
+                range: None,
+            }));
+        }
+
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let Some(value) = assembly.symbols.get(name) else { return Ok(None); };
+        let Some(span) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+        let kind = if text.lines().nth(span.line - 1).unwrap_or("").split(';').next().unwrap_or("").trim().ends_with(':') {
+            "Label"
+        } else {
+            "Constant"
         };
-        let base = instruction.opcode.cycles as u16;
-        let worst = base + extra;
         let value = format!(
-            "**{}**  \\nAddress: `${:04x}`  \\nMode: `{:?}`  \\nCycles: **{}**{}",
-            instruction.opcode.mnemonic,
-            instruction.address,
-            instruction.opcode.mode,
-            base,
-            if worst == base { String::new() } else { format!("–{}", worst) }
+            "**{}** — {}  \\nValue: `${:04x}` / {}  \\nDefined: line {}",
+            name, kind, value, value, span.line
         );
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
-            range: None,
+            range: Some(Range {
+                start: Position::new(position.line, start as u32),
+                end: Position::new(position.line, end as u32),
+            }),
         }))
     }
 
