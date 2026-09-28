@@ -66,6 +66,7 @@ impl LanguageServer for Backend {
                 references_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions { prepare_provider: Some(true), work_done_progress_options: WorkDoneProgressOptions::default() })),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                completion_provider: Some(CompletionOptions::default()),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -170,6 +171,52 @@ impl LanguageServer for Backend {
                 end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
             },
         })))
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let mut items = Vec::new();
+        let mut mnemonics = std::collections::BTreeSet::new();
+        for opcode in sceneasm_core::OPCODES {
+            if mnemonics.insert(opcode.mnemonic) {
+                items.push(CompletionItem {
+                    label: opcode.mnemonic.to_ascii_lowercase(),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    detail: Some("MOS 6502/6510 instruction".into()),
+                    ..CompletionItem::default()
+                });
+            }
+        }
+        for directive in [
+            ".org", ".byte", ".text", ".assert", ".assert_cycles", ".raster",
+            ".undocumented", ".vic_display", ".vic_yscroll", ".vic_sprites", ".vic_sprite_y",
+        ] {
+            items.push(CompletionItem {
+                label: directive.into(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("SceneASM directive".into()),
+                ..CompletionItem::default()
+            });
+        }
+        if let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) {
+            for (name, value) in &assembly.symbols {
+                let is_label = assembly.symbol_definitions.get(name).is_some_and(|span| {
+                    text.lines().nth(span.line - 1).unwrap_or("").split(';').next().unwrap_or("").trim().ends_with(':')
+                });
+                items.push(CompletionItem {
+                    label: name.clone(),
+                    kind: Some(if is_label { CompletionItemKind::REFERENCE } else { CompletionItemKind::CONSTANT }),
+                    detail: Some(format!("${:04x}", value)),
+                    ..CompletionItem::default()
+                });
+            }
+        }
+        Ok(Some(CompletionResponse::Array(items)))
     }
 
     async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
