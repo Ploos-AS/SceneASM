@@ -62,6 +62,7 @@ impl LanguageServer for Backend {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                definition_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -113,6 +114,31 @@ impl LanguageServer for Backend {
             contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
             range: None,
         }))
+    }
+
+    async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
+        let position = params.text_document_position_params.position;
+        let uri = params.text_document_position_params.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let Some(span) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+        Ok(Some(GotoDefinitionResponse::Scalar(Location {
+            uri,
+            range: Range {
+                start: Position::new((span.line - 1) as u32, (span.column_start - 1) as u32),
+                end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
+            },
+        })))
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
