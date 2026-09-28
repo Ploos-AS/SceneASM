@@ -64,6 +64,7 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions { prepare_provider: Some(true), work_done_progress_options: WorkDoneProgressOptions::default() })),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -168,6 +169,92 @@ impl LanguageServer for Backend {
                 end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
             },
         })))
+    }
+
+    async fn prepare_rename(&self, params: TextDocumentPositionParams) -> Result<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri;
+        let position = params.position;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        if !assembly.symbol_definitions.contains_key(name) { return Ok(None); }
+        Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
+            range: Range {
+                start: Position::new(position.line, start as u32),
+                end: Position::new(position.line, end as u32),
+            },
+            placeholder: name.to_string(),
+        }))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let valid_new_name = {
+            let mut chars = params.new_name.chars();
+            chars.next().is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        };
+        if !valid_new_name { return Ok(None); }
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        if !assembly.symbol_definitions.contains_key(name) || assembly.symbols.contains_key(&params.new_name) {
+            return Ok(None);
+        }
+
+        let mut edits = Vec::new();
+        for (line_index, source_line) in text.lines().enumerate() {
+            let code = source_line.split(';').next().unwrap_or("");
+            let bytes = code.as_bytes();
+            let mut index = 0;
+            while index < bytes.len() {
+                let ch = bytes[index] as char;
+                if ch == '_' || ch.is_ascii_alphabetic() {
+                    let token_start = index;
+                    index += 1;
+                    while index < bytes.len() {
+                        let ch = bytes[index] as char;
+                        if ch == '_' || ch.is_ascii_alphanumeric() { index += 1; } else { break; }
+                    }
+                    if &code[token_start..index] == name {
+                        edits.push(TextEdit {
+                            range: Range {
+                                start: Position::new(line_index as u32, token_start as u32),
+                                end: Position::new(line_index as u32, index as u32),
+                            },
+                            new_text: params.new_name.clone(),
+                        });
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        let mut changes = HashMap::new();
+        changes.insert(uri, edits);
+        Ok(Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..WorkspaceEdit::default()
+        }))
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
