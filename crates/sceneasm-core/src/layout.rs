@@ -8,7 +8,11 @@ pub struct Layout {
     pub symbols: BTreeMap<String, u16>,
 }
 
-pub fn resolve_value(text: &str, symbols: &BTreeMap<String, u16>, line: usize) -> Result<Option<u16>, AssembleError> {
+pub fn resolve_value(
+    text: &str,
+    symbols: &BTreeMap<String, u16>,
+    line: usize,
+) -> Result<Option<u16>, AssembleError> {
     expr::eval(text, symbols, line)
 }
 
@@ -21,8 +25,10 @@ pub fn choose_mode(
 ) -> Result<(AddressingMode, Option<u16>), AssembleError> {
     match operand {
         None if opcode_with_policy(mnemonic, AddressingMode::Accumulator, policy).is_some()
-            && opcode_with_policy(mnemonic, AddressingMode::Implied, policy).is_none()
-            => Ok((AddressingMode::Accumulator, None)),
+            && opcode_with_policy(mnemonic, AddressingMode::Implied, policy).is_none() =>
+        {
+            Ok((AddressingMode::Accumulator, None))
+        }
         None => Ok((AddressingMode::Implied, None)),
         Some(arg) if arg.starts_with('#') => {
             let value = resolve_value(arg.trim_start_matches('#').trim(), symbols, line)?;
@@ -44,7 +50,11 @@ pub fn choose_mode(
     }
 }
 
-pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> Result<Layout, AssembleError> {
+pub fn layout(
+    source: &str,
+    default_origin: u16,
+    policy: UndocumentedPolicy,
+) -> Result<Layout, AssembleError> {
     let mut previous = BTreeMap::new();
     let mut origin = default_origin;
 
@@ -59,11 +69,20 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
         for (index, raw) in source.lines().enumerate() {
             let line_no = index + 1;
             let line = raw.split(';').next().unwrap_or("").trim();
-            if line.is_empty() { continue; }
+            if line.is_empty() {
+                continue;
+            }
 
-            if let Some(rest) = line.strip_prefix("* =").or_else(|| line.strip_prefix(".org")) {
-                let value = resolve_value(rest.trim(), &previous, line_no)?
-                    .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: rest.trim().to_string() })?;
+            if let Some(rest) = line
+                .strip_prefix("* =")
+                .or_else(|| line.strip_prefix(".org"))
+            {
+                let value = resolve_value(rest.trim(), &previous, line_no)?.ok_or_else(|| {
+                    AssembleError::UnresolvedSymbol {
+                        line: line_no,
+                        name: rest.trim().to_string(),
+                    }
+                })?;
                 current_origin = value;
                 pc = value;
                 continue;
@@ -71,10 +90,17 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
             if !line.starts_with('.') {
                 if let Some((name, expression)) = line.split_once('=') {
                     let name = name.trim();
-                    if name.chars().next().is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic()) {
+                    if name
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                    {
                         if let Some(value) = expr::eval(expression.trim(), &previous, line_no)? {
                             if symbols.insert(name.to_string(), value).is_some() {
-                                return Err(AssembleError::DuplicateSymbol { line: line_no, name: name.to_string() });
+                                return Err(AssembleError::DuplicateSymbol {
+                                    line: line_no,
+                                    name: name.to_string(),
+                                });
                             }
                         }
                         continue;
@@ -84,7 +110,10 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
             if let Some(label) = line.strip_suffix(':') {
                 let name = label.trim().to_string();
                 if symbols.insert(name.clone(), pc).is_some() {
-                    return Err(AssembleError::DuplicateSymbol { line: line_no, name });
+                    return Err(AssembleError::DuplicateSymbol {
+                        line: line_no,
+                        name,
+                    });
                 }
                 continue;
             }
@@ -93,13 +122,22 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
                     "deny" => UndocumentedPolicy::Deny,
                     "stable" => UndocumentedPolicy::Stable,
                     "all" => UndocumentedPolicy::All,
-                    _ => return Err(AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() }),
+                    _ => {
+                        return Err(AssembleError::UnsupportedStatement {
+                            line: line_no,
+                            text: line.to_string(),
+                        })
+                    }
                 };
                 continue;
             }
-            if line == "}" || (line.starts_with(".raster") && line.ends_with('{'))
-                || line.starts_with(".vic_display") || line.starts_with(".vic_yscroll")
-                || line.starts_with(".vic_sprites") || line.starts_with(".vic_sprite_y") {
+            if line == "}"
+                || (line.starts_with(".raster") && line.ends_with('{'))
+                || line.starts_with(".vic_display")
+                || line.starts_with(".vic_yscroll")
+                || line.starts_with(".vic_sprites")
+                || line.starts_with(".vic_sprite_y")
+            {
                 continue;
             }
             if let Some(rest) = line.strip_prefix(".assert") {
@@ -108,7 +146,8 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
                 continue;
             }
             if let Some(rest) = line.strip_prefix(".byte") {
-                pc = pc.wrapping_add(rest.split(',').filter(|s| !s.trim().is_empty()).count() as u16);
+                pc = pc
+                    .wrapping_add(rest.split(',').filter(|s| !s.trim().is_empty()).count() as u16);
                 continue;
             }
             if let Some(rest) = line.strip_prefix(".text") {
@@ -117,16 +156,25 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
                     pc = pc.wrapping_add((text.len() - 2) as u16);
                     continue;
                 }
-                return Err(AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() });
+                return Err(AssembleError::UnsupportedStatement {
+                    line: line_no,
+                    text: line.to_string(),
+                });
             }
 
             let upper = line.to_ascii_uppercase();
             let (mnemonic, operand) = if let Some((m, _)) = upper.split_once(' ') {
                 (m, line.split_once(' ').map(|(_, a)| a.trim()))
-            } else { (upper.as_str(), None) };
+            } else {
+                (upper.as_str(), None)
+            };
             let (mode, _) = choose_mode(mnemonic, operand, &previous, current_policy, line_no)?;
-            let op = opcode_with_policy(mnemonic, mode, current_policy)
-                .ok_or_else(|| AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() })?;
+            let op = opcode_with_policy(mnemonic, mode, current_policy).ok_or_else(|| {
+                AssembleError::UnsupportedStatement {
+                    line: line_no,
+                    text: line.to_string(),
+                }
+            })?;
             pc = pc.wrapping_add(op.bytes as u16);
         }
 
@@ -139,4 +187,3 @@ pub fn layout(source: &str, default_origin: u16, policy: UndocumentedPolicy) -> 
 
     Err(AssembleError::LayoutDidNotConverge)
 }
-

@@ -21,7 +21,9 @@ impl Backend {
                     let severity = match diagnostic.severity {
                         sceneasm_core::diagnostic::Severity::Error => DiagnosticSeverity::ERROR,
                         sceneasm_core::diagnostic::Severity::Warning => DiagnosticSeverity::WARNING,
-                        sceneasm_core::diagnostic::Severity::Info => DiagnosticSeverity::INFORMATION,
+                        sceneasm_core::diagnostic::Severity::Info => {
+                            DiagnosticSeverity::INFORMATION
+                        }
                         sceneasm_core::diagnostic::Severity::Hint => DiagnosticSeverity::HINT,
                     };
                     Some(Diagnostic {
@@ -51,7 +53,9 @@ impl Backend {
                 ..Diagnostic::default()
             }],
         };
-        self.client.publish_diagnostics(uri, diagnostics, None).await;
+        self.client
+            .publish_diagnostics(uri, diagnostics, None)
+            .await;
     }
 }
 
@@ -60,11 +64,16 @@ impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+                text_document_sync: Some(TextDocumentSyncCapability::Kind(
+                    TextDocumentSyncKind::FULL,
+                )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
-                rename_provider: Some(OneOf::Right(RenameOptions { prepare_provider: Some(true), work_done_progress_options: WorkDoneProgressOptions::default() })),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                })),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions::default()),
                 inlay_hint_provider: Some(OneOf::Left(true)),
@@ -78,7 +87,9 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        self.client.log_message(MessageType::INFO, "SceneASM LSP ready").await;
+        self.client
+            .log_message(MessageType::INFO, "SceneASM LSP ready")
+            .await;
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -90,10 +101,14 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let text = {
             let documents = self.documents.read().await;
-            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            let Some(text) = documents.get(&uri) else {
+                return Ok(None);
+            };
             text.clone()
         };
-        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else {
+            return Ok(None);
+        };
         let line_no = position.line as usize + 1;
         let column = position.character as usize + 1;
 
@@ -115,7 +130,11 @@ impl LanguageServer for Backend {
                 instruction.address,
                 instruction.opcode.mode,
                 base,
-                if worst == base { String::new() } else { format!("–{}", worst) }
+                if worst == base {
+                    String::new()
+                } else {
+                    format!("–{}", worst)
+                }
             );
             if let Some(write) = assembly.hardware_writes.iter().find(|write| {
                 write.source.line == instruction.source.line
@@ -126,19 +145,26 @@ impl LanguageServer for Backend {
                     write.register.name, write.register.address, write.value
                 ));
                 let decoded: Vec<_> =
-                    sceneasm_core::c64_registers::decode_value(write.register.address, write.value).collect();
+                    sceneasm_core::c64_registers::decode_value(write.register.address, write.value)
+                        .collect();
                 if !decoded.is_empty() {
                     value.push_str("\\n\\n**Decoded value**");
                     for field in decoded {
                         value.push_str(&format!(
                             "\\n- `{}` **{}** = `{}` — {}",
-                            field.field.bits, field.field.name, field.value, field.field.description
+                            field.field.bits,
+                            field.field.name,
+                            field.value,
+                            field.field.description
                         ));
                     }
                 }
             }
             return Ok(Some(Hover {
-                contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value,
+                }),
                 range: None,
             }));
         }
@@ -146,23 +172,34 @@ impl LanguageServer for Backend {
         let line = text.lines().nth(position.line as usize).unwrap_or("");
         let byte = position.character as usize;
         let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
-        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
-        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let start = line[..byte.min(line.len())]
+            .rfind(|ch: char| !is_symbol(ch))
+            .map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..]
+            .find(|ch: char| !is_symbol(ch))
+            .map_or(line.len(), |i| byte.min(line.len()) + i);
         let name = &line[start..end];
         if let Some(register) = sceneasm_core::c64_registers::register_by_name(name) {
             let mut value = format!(
                 "**{}** — C64 hardware register  \\nAddress: `${:04x}`  \\n{}",
                 register.name, register.address, register.description
             );
-            let fields: Vec<_> = sceneasm_core::c64_registers::bit_fields(register.address).collect();
+            let fields: Vec<_> =
+                sceneasm_core::c64_registers::bit_fields(register.address).collect();
             if !fields.is_empty() {
                 value.push_str("\\n\\n**Bits**");
                 for field in fields {
-                    value.push_str(&format!("\\n- `{}` **{}** — {}", field.bits, field.name, field.description));
+                    value.push_str(&format!(
+                        "\\n- `{}` **{}** — {}",
+                        field.bits, field.name, field.description
+                    ));
                 }
             }
             return Ok(Some(Hover {
-                contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value,
+                }),
                 range: Some(Range {
                     start: Position::new(position.line, start as u32),
                     end: Position::new(position.line, end as u32),
@@ -215,8 +252,12 @@ impl LanguageServer for Backend {
             }
         }
 
-        let Some(value) = assembly.symbols.get(name) else { return Ok(None); };
-        let Some(span) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+        let Some(value) = assembly.symbols.get(name) else {
+            return Ok(None);
+        };
+        let Some(span) = assembly.symbol_definitions.get(name) else {
+            return Ok(None);
+        };
         let kind = if text
             .lines()
             .nth(span.line - 1)
@@ -247,22 +288,35 @@ impl LanguageServer for Backend {
         }))
     }
 
-    async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
         let position = params.text_document_position_params.position;
         let uri = params.text_document_position_params.text_document.uri;
         let text = {
             let documents = self.documents.read().await;
-            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            let Some(text) = documents.get(&uri) else {
+                return Ok(None);
+            };
             text.clone()
         };
         let line = text.lines().nth(position.line as usize).unwrap_or("");
         let byte = position.character as usize;
         let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
-        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
-        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let start = line[..byte.min(line.len())]
+            .rfind(|ch: char| !is_symbol(ch))
+            .map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..]
+            .find(|ch: char| !is_symbol(ch))
+            .map_or(line.len(), |i| byte.min(line.len()) + i);
         let name = &line[start..end];
-        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
-        let Some(span) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else {
+            return Ok(None);
+        };
+        let Some(span) = assembly.symbol_definitions.get(name) else {
+            return Ok(None);
+        };
         Ok(Some(GotoDefinitionResponse::Scalar(Location {
             uri,
             range: Range {
@@ -276,10 +330,14 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let text = {
             let documents = self.documents.read().await;
-            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            let Some(text) = documents.get(&uri) else {
+                return Ok(None);
+            };
             text.clone()
         };
-        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else {
+            return Ok(None);
+        };
         let mut hints = Vec::new();
         for instruction in &assembly.instructions {
             let line_index = instruction.source.line.saturating_sub(1) as u32;
@@ -299,10 +357,14 @@ impl LanguageServer for Backend {
                 format!("{}–{}c", base, worst)
             };
             let raster_slot = assembly.raster_contracts.iter().find_map(|contract| {
-                contract.schedule.iter().find(|scheduled| {
-                    scheduled.address == instruction.address
-                        && scheduled.source.line == instruction.source.line
-                }).map(|scheduled| (contract.line, scheduled))
+                contract
+                    .schedule
+                    .iter()
+                    .find(|scheduled| {
+                        scheduled.address == instruction.address
+                            && scheduled.source.line == instruction.source.line
+                    })
+                    .map(|scheduled| (contract.line, scheduled))
             });
             let timing_tooltip = if let Some((raster_line, scheduled)) = raster_slot {
                 label.push_str(&format!(" · r{} c{}", raster_line, scheduled.start_cycle));
@@ -362,7 +424,9 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position.text_document.uri;
         let text = {
             let documents = self.documents.read().await;
-            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            let Some(text) = documents.get(&uri) else {
+                return Ok(None);
+            };
             text.clone()
         };
         let mut items = Vec::new();
@@ -378,8 +442,17 @@ impl LanguageServer for Backend {
             }
         }
         for directive in [
-            ".org", ".byte", ".text", ".assert", ".assert_cycles", ".raster",
-            ".undocumented", ".vic_display", ".vic_yscroll", ".vic_sprites", ".vic_sprite_y",
+            ".org",
+            ".byte",
+            ".text",
+            ".assert",
+            ".assert_cycles",
+            ".raster",
+            ".undocumented",
+            ".vic_display",
+            ".vic_yscroll",
+            ".vic_sprites",
+            ".vic_sprite_y",
         ] {
             items.push(CompletionItem {
                 label: directive.into(),
@@ -392,7 +465,10 @@ impl LanguageServer for Backend {
             items.push(CompletionItem {
                 label: register.name.into(),
                 kind: Some(CompletionItemKind::VALUE),
-                detail: Some(format!("${:04x} — {}", register.address, register.description)),
+                detail: Some(format!(
+                    "${:04x} — {}",
+                    register.address, register.description
+                )),
                 insert_text: Some(format!("${:04x}", register.address)),
                 ..CompletionItem::default()
             });
@@ -400,11 +476,22 @@ impl LanguageServer for Backend {
         if let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) {
             for (name, value) in &assembly.symbols {
                 let is_label = assembly.symbol_definitions.get(name).is_some_and(|span| {
-                    text.lines().nth(span.line - 1).unwrap_or("").split(';').next().unwrap_or("").trim().ends_with(':')
+                    text.lines()
+                        .nth(span.line - 1)
+                        .unwrap_or("")
+                        .split(';')
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .ends_with(':')
                 });
                 items.push(CompletionItem {
                     label: name.clone(),
-                    kind: Some(if is_label { CompletionItemKind::REFERENCE } else { CompletionItemKind::CONSTANT }),
+                    kind: Some(if is_label {
+                        CompletionItemKind::REFERENCE
+                    } else {
+                        CompletionItemKind::CONSTANT
+                    }),
                     detail: Some(format!("${:04x}", value)),
                     ..CompletionItem::default()
                 });
@@ -413,14 +500,21 @@ impl LanguageServer for Backend {
         Ok(Some(CompletionResponse::Array(items)))
     }
 
-    async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
         let uri = params.text_document.uri;
         let text = {
             let documents = self.documents.read().await;
-            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            let Some(text) = documents.get(&uri) else {
+                return Ok(None);
+            };
             text.clone()
         };
-        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else {
+            return Ok(None);
+        };
         let mut symbols = Vec::new();
         for (name, span) in &assembly.symbol_definitions {
             let source_line = text.lines().nth(span.line - 1).unwrap_or("");
@@ -432,8 +526,15 @@ impl LanguageServer for Backend {
             };
             symbols.push(DocumentSymbol {
                 name: name.clone(),
-                detail: assembly.symbols.get(name).map(|value| format!("${:04x}", value)),
-                kind: if is_label { SymbolKind::FUNCTION } else { SymbolKind::CONSTANT },
+                detail: assembly
+                    .symbols
+                    .get(name)
+                    .map(|value| format!("${:04x}", value)),
+                kind: if is_label {
+                    SymbolKind::FUNCTION
+                } else {
+                    SymbolKind::CONSTANT
+                },
                 tags: None,
                 deprecated: None,
                 range,
@@ -445,22 +546,35 @@ impl LanguageServer for Backend {
         Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 
-    async fn prepare_rename(&self, params: TextDocumentPositionParams) -> Result<Option<PrepareRenameResponse>> {
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
         let uri = params.text_document.uri;
         let position = params.position;
         let text = {
             let documents = self.documents.read().await;
-            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            let Some(text) = documents.get(&uri) else {
+                return Ok(None);
+            };
             text.clone()
         };
         let line = text.lines().nth(position.line as usize).unwrap_or("");
         let byte = position.character as usize;
         let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
-        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
-        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let start = line[..byte.min(line.len())]
+            .rfind(|ch: char| !is_symbol(ch))
+            .map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..]
+            .find(|ch: char| !is_symbol(ch))
+            .map_or(line.len(), |i| byte.min(line.len()) + i);
         let name = &line[start..end];
-        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
-        if !assembly.symbol_definitions.contains_key(name) { return Ok(None); }
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else {
+            return Ok(None);
+        };
+        if !assembly.symbol_definitions.contains_key(name) {
+            return Ok(None);
+        }
         Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
             range: Range {
                 start: Position::new(position.line, start as u32),
@@ -475,23 +589,37 @@ impl LanguageServer for Backend {
         let position = params.text_document_position.position;
         let text = {
             let documents = self.documents.read().await;
-            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            let Some(text) = documents.get(&uri) else {
+                return Ok(None);
+            };
             text.clone()
         };
         let line = text.lines().nth(position.line as usize).unwrap_or("");
         let byte = position.character as usize;
         let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
-        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
-        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let start = line[..byte.min(line.len())]
+            .rfind(|ch: char| !is_symbol(ch))
+            .map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..]
+            .find(|ch: char| !is_symbol(ch))
+            .map_or(line.len(), |i| byte.min(line.len()) + i);
         let name = &line[start..end];
         let valid_new_name = {
             let mut chars = params.new_name.chars();
-            chars.next().is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+            chars
+                .next()
+                .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
                 && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
         };
-        if !valid_new_name { return Ok(None); }
-        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
-        if !assembly.symbol_definitions.contains_key(name) || assembly.symbols.contains_key(&params.new_name) {
+        if !valid_new_name {
+            return Ok(None);
+        }
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else {
+            return Ok(None);
+        };
+        if !assembly.symbol_definitions.contains_key(name)
+            || assembly.symbols.contains_key(&params.new_name)
+        {
             return Ok(None);
         }
 
@@ -507,7 +635,11 @@ impl LanguageServer for Backend {
                     index += 1;
                     while index < bytes.len() {
                         let ch = bytes[index] as char;
-                        if ch == '_' || ch.is_ascii_alphanumeric() { index += 1; } else { break; }
+                        if ch == '_' || ch.is_ascii_alphanumeric() {
+                            index += 1;
+                        } else {
+                            break;
+                        }
                     }
                     if &code[token_start..index] == name {
                         edits.push(TextEdit {
@@ -536,17 +668,27 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position.text_document.uri;
         let text = {
             let documents = self.documents.read().await;
-            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            let Some(text) = documents.get(&uri) else {
+                return Ok(None);
+            };
             text.clone()
         };
         let line = text.lines().nth(position.line as usize).unwrap_or("");
         let byte = position.character as usize;
         let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
-        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
-        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let start = line[..byte.min(line.len())]
+            .rfind(|ch: char| !is_symbol(ch))
+            .map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..]
+            .find(|ch: char| !is_symbol(ch))
+            .map_or(line.len(), |i| byte.min(line.len()) + i);
         let name = &line[start..end];
-        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
-        let Some(definition) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else {
+            return Ok(None);
+        };
+        let Some(definition) = assembly.symbol_definitions.get(name) else {
+            return Ok(None);
+        };
 
         let mut locations = Vec::new();
         for (line_index, source_line) in text.lines().enumerate() {
@@ -560,7 +702,11 @@ impl LanguageServer for Backend {
                     index += 1;
                     while index < bytes.len() {
                         let ch = bytes[index] as char;
-                        if ch == '_' || ch.is_ascii_alphanumeric() { index += 1; } else { break; }
+                        if ch == '_' || ch.is_ascii_alphanumeric() {
+                            index += 1;
+                        } else {
+                            break;
+                        }
                     }
                     if &code[token_start..index] == name {
                         let is_declaration = line_index + 1 == definition.line
@@ -586,14 +732,20 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri;
         let text = params.text_document.text;
-        self.documents.write().await.insert(uri.clone(), text.clone());
+        self.documents
+            .write()
+            .await
+            .insert(uri.clone(), text.clone());
         self.analyze(uri, &text).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.into_iter().last() {
             let uri = params.text_document.uri;
-            self.documents.write().await.insert(uri.clone(), change.text.clone());
+            self.documents
+                .write()
+                .await
+                .insert(uri.clone(), change.text.clone());
             self.analyze(uri, &change.text).await;
         }
     }

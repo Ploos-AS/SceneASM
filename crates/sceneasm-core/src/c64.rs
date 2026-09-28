@@ -13,15 +13,27 @@ pub struct C64Timing {
 
 impl C64Timing {
     pub const fn pal() -> Self {
-        Self { standard: VideoStandard::Pal, cycles_per_line: 63, lines_per_frame: 312 }
+        Self {
+            standard: VideoStandard::Pal,
+            cycles_per_line: 63,
+            lines_per_frame: 312,
+        }
     }
 
     pub const fn ntsc() -> Self {
-        Self { standard: VideoStandard::Ntsc, cycles_per_line: 65, lines_per_frame: 263 }
+        Self {
+            standard: VideoStandard::Ntsc,
+            cycles_per_line: 65,
+            lines_per_frame: 263,
+        }
     }
 
     pub const fn line_budget(self, raster_line: u16) -> Option<u16> {
-        if raster_line < self.lines_per_frame { Some(self.cycles_per_line) } else { None }
+        if raster_line < self.lines_per_frame {
+            Some(self.cycles_per_line)
+        } else {
+            None
+        }
     }
 }
 
@@ -34,7 +46,14 @@ pub struct VicState {
 }
 
 impl Default for VicState {
-    fn default() -> Self { Self { display_enabled: true, y_scroll: 3, sprite_enable_mask: 0, sprite_y: [0; 8] } }
+    fn default() -> Self {
+        Self {
+            display_enabled: true,
+            y_scroll: 3,
+            sprite_enable_mask: 0,
+            sprite_y: [0; 8],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,14 +70,16 @@ pub struct BusMap {
 
 impl BusMap {
     pub fn cpu_cycles(&self) -> u16 {
-        self.slots.iter().filter(|owner| matches!(owner, BusOwner::Cpu)).count() as u16
+        self.slots
+            .iter()
+            .filter(|owner| matches!(owner, BusOwner::Cpu))
+            .count() as u16
     }
 
     pub fn stolen_cycles(&self) -> u16 {
         self.slots.len() as u16 - self.cpu_cycles()
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScheduledInstruction {
@@ -134,7 +155,10 @@ pub struct VicLineTiming {
 
 impl C64Timing {
     pub fn vic_line(self, raster_line: u16, state: VicState) -> Option<VicLineTiming> {
-        let total = match self.line_budget(raster_line) { Some(v) => v, None => return None };
+        let total = match self.line_budget(raster_line) {
+            Some(v) => v,
+            None => return None,
+        };
         // Badline condition for the normal display window. The VIC-II performs
         // 40 character-matrix fetches, taking 40 CPU bus cycles.
         let badline = state.display_enabled
@@ -239,7 +263,12 @@ mod tests {
     #[test]
     fn pal_badline_exposes_vic_bus_stealing() {
         let timing = C64Timing::pal();
-        let state = VicState { display_enabled: true, y_scroll: 0, sprite_enable_mask: 0, sprite_y: [0; 8] };
+        let state = VicState {
+            display_enabled: true,
+            y_scroll: 0,
+            sprite_enable_mask: 0,
+            sprite_y: [0; 8],
+        };
         let line = timing.vic_line(0x30, state).unwrap();
         assert!(line.badline);
         assert_eq!(line.vic_stolen_cycles, 40);
@@ -252,12 +281,34 @@ mod tests {
 
     #[test]
     fn bus_map_stalls_cpu_instruction_timeline() {
-        let mut bus = BusMap { slots: vec![BusOwner::Cpu; 12] };
+        let mut bus = BusMap {
+            slots: vec![BusOwner::Cpu; 12],
+        };
         bus.slots[2] = BusOwner::Badline;
         bus.slots[3] = BusOwner::Badline;
         let instructions = vec![
-            crate::InstructionInfo { address: 0x1000, source: crate::SourceSpan { file_id: 0, line: 10, column_start: 1, column_end: 7 }, expansion: crate::source::ExpansionTrace::default(), opcode: crate::opcode("LDA", crate::AddressingMode::Immediate).unwrap() },
-            crate::InstructionInfo { address: 0x1002, source: crate::SourceSpan { file_id: 0, line: 11, column_start: 1, column_end: 4 }, expansion: crate::source::ExpansionTrace::default(), opcode: crate::opcode("RTS", crate::AddressingMode::Implied).unwrap() },
+            crate::InstructionInfo {
+                address: 0x1000,
+                source: crate::SourceSpan {
+                    file_id: 0,
+                    line: 10,
+                    column_start: 1,
+                    column_end: 7,
+                },
+                expansion: crate::source::ExpansionTrace::default(),
+                opcode: crate::opcode("LDA", crate::AddressingMode::Immediate).unwrap(),
+            },
+            crate::InstructionInfo {
+                address: 0x1002,
+                source: crate::SourceSpan {
+                    file_id: 0,
+                    line: 11,
+                    column_start: 1,
+                    column_end: 4,
+                },
+                expansion: crate::source::ExpansionTrace::default(),
+                opcode: crate::opcode("RTS", crate::AddressingMode::Implied).unwrap(),
+            },
         ];
         let schedule = bus.schedule(&instructions);
         assert_eq!(schedule.instructions[0].end_cycle, 2);
@@ -267,7 +318,6 @@ mod tests {
         assert_eq!(schedule.instructions[1].end_cycle, 10);
         assert_eq!(schedule.stalled_cycles, 2);
     }
-
 
     #[test]
     fn sprite_dma_follows_y_window() {
@@ -285,7 +335,12 @@ mod tests {
     #[test]
     fn sprite_dma_is_accounted_separately() {
         let timing = C64Timing::pal();
-        let mut state = VicState { display_enabled: false, y_scroll: 3, sprite_enable_mask: 0b0000_0111, sprite_y: [0; 8] };
+        let mut state = VicState {
+            display_enabled: false,
+            y_scroll: 3,
+            sprite_enable_mask: 0b0000_0111,
+            sprite_y: [0; 8],
+        };
         state.sprite_y[0] = 90;
         state.sprite_y[1] = 90;
         state.sprite_y[2] = 90;
@@ -297,6 +352,10 @@ mod tests {
         assert_eq!(line.vic_stolen_cycles, 6);
         assert_eq!(line.cpu_available_cycles, 57);
         assert_eq!(line.bus.stolen_cycles(), 6);
-        assert!(line.bus.slots.iter().any(|owner| matches!(owner, BusOwner::Sprite(0))));
+        assert!(line
+            .bus
+            .slots
+            .iter()
+            .any(|owner| matches!(owner, BusOwner::Sprite(0))));
     }
 }

@@ -23,7 +23,11 @@ impl CycleRange {
     }
 
     pub const fn margin(self, budget: u64) -> Option<u64> {
-        if self.fits(budget) { Some(budget - self.max) } else { None }
+        if self.fits(budget) {
+            Some(budget - self.max)
+        } else {
+            None
+        }
     }
 }
 
@@ -43,8 +47,28 @@ mod tests {
     #[test]
     fn variable_cycles_expand_worst_case() {
         let instructions = vec![
-            InstructionInfo { address: 0x1000, source: SourceSpan { file_id: 0, line: 1, column_start: 1, column_end: 4 }, expansion: ExpansionTrace::default(), opcode: opcode("LDA", AddressingMode::AbsoluteX).unwrap() },
-            InstructionInfo { address: 0x1003, source: SourceSpan { file_id: 0, line: 2, column_start: 1, column_end: 4 }, expansion: ExpansionTrace::default(), opcode: opcode("BNE", AddressingMode::Relative).unwrap() },
+            InstructionInfo {
+                address: 0x1000,
+                source: SourceSpan {
+                    file_id: 0,
+                    line: 1,
+                    column_start: 1,
+                    column_end: 4,
+                },
+                expansion: ExpansionTrace::default(),
+                opcode: opcode("LDA", AddressingMode::AbsoluteX).unwrap(),
+            },
+            InstructionInfo {
+                address: 0x1003,
+                source: SourceSpan {
+                    file_id: 0,
+                    line: 2,
+                    column_start: 1,
+                    column_end: 4,
+                },
+                expansion: ExpansionTrace::default(),
+                opcode: opcode("BNE", AddressingMode::Relative).unwrap(),
+            },
         ];
         let range = analyze(&instructions);
         assert_eq!(range, CycleRange { min: 6, max: 9 });

@@ -18,12 +18,24 @@ enum Token {
     Ge,
 }
 
-pub fn eval(text: &str, symbols: &BTreeMap<String, u16>, line: usize) -> Result<Option<u16>, AssembleError> {
+pub fn eval(
+    text: &str,
+    symbols: &BTreeMap<String, u16>,
+    line: usize,
+) -> Result<Option<u16>, AssembleError> {
     let tokens = lex(text, line)?;
-    let mut parser = Parser { tokens: &tokens, pos: 0, symbols, line };
+    let mut parser = Parser {
+        tokens: &tokens,
+        pos: 0,
+        symbols,
+        line,
+    };
     let value = parser.expr()?;
     if parser.pos != tokens.len() {
-        return Err(AssembleError::InvalidExpression { line, text: text.to_string() });
+        return Err(AssembleError::InvalidExpression {
+            line,
+            text: text.to_string(),
+        });
     }
     Ok(value)
 }
@@ -35,39 +47,89 @@ fn lex(text: &str, line: usize) -> Result<Vec<Token>, AssembleError> {
     while i < chars.len() {
         match chars[i] {
             c if c.is_whitespace() => i += 1,
-            '+' => { out.push(Token::Plus); i += 1; }
-            '-' => { out.push(Token::Minus); i += 1; }
-            '(' => { out.push(Token::LParen); i += 1; }
-            ')' => { out.push(Token::RParen); i += 1; }
-            '<' if chars.get(i + 1) == Some(&'=') => { out.push(Token::Le); i += 2; }
-            '>' if chars.get(i + 1) == Some(&'=') => { out.push(Token::Ge); i += 2; }
-            '=' if chars.get(i + 1) == Some(&'=') => { out.push(Token::Eq); i += 2; }
-            '!' if chars.get(i + 1) == Some(&'=') => { out.push(Token::Ne); i += 2; }
-            '<' => { out.push(Token::Low); i += 1; }
-            '>' => { out.push(Token::High); i += 1; }
+            '+' => {
+                out.push(Token::Plus);
+                i += 1;
+            }
+            '-' => {
+                out.push(Token::Minus);
+                i += 1;
+            }
+            '(' => {
+                out.push(Token::LParen);
+                i += 1;
+            }
+            ')' => {
+                out.push(Token::RParen);
+                i += 1;
+            }
+            '<' if chars.get(i + 1) == Some(&'=') => {
+                out.push(Token::Le);
+                i += 2;
+            }
+            '>' if chars.get(i + 1) == Some(&'=') => {
+                out.push(Token::Ge);
+                i += 2;
+            }
+            '=' if chars.get(i + 1) == Some(&'=') => {
+                out.push(Token::Eq);
+                i += 2;
+            }
+            '!' if chars.get(i + 1) == Some(&'=') => {
+                out.push(Token::Ne);
+                i += 2;
+            }
+            '<' => {
+                out.push(Token::Low);
+                i += 1;
+            }
+            '>' => {
+                out.push(Token::High);
+                i += 1;
+            }
             '$' => {
                 i += 1;
                 let start = i;
-                while i < chars.len() && chars[i].is_ascii_hexdigit() { i += 1; }
+                while i < chars.len() && chars[i].is_ascii_hexdigit() {
+                    i += 1;
+                }
                 let s: String = chars[start..i].iter().collect();
-                let n = u16::from_str_radix(&s, 16).map_err(|_| AssembleError::InvalidExpression { line, text: text.to_string() })?;
+                let n =
+                    u16::from_str_radix(&s, 16).map_err(|_| AssembleError::InvalidExpression {
+                        line,
+                        text: text.to_string(),
+                    })?;
                 out.push(Token::Number(n));
             }
             c if c.is_ascii_digit() => {
                 let start = i;
                 i += 1;
-                while i < chars.len() && chars[i].is_ascii_digit() { i += 1; }
+                while i < chars.len() && chars[i].is_ascii_digit() {
+                    i += 1;
+                }
                 let s: String = chars[start..i].iter().collect();
-                let n = s.parse::<u16>().map_err(|_| AssembleError::InvalidExpression { line, text: text.to_string() })?;
+                let n = s
+                    .parse::<u16>()
+                    .map_err(|_| AssembleError::InvalidExpression {
+                        line,
+                        text: text.to_string(),
+                    })?;
                 out.push(Token::Number(n));
             }
             c if c == '_' || c.is_ascii_alphabetic() => {
                 let start = i;
                 i += 1;
-                while i < chars.len() && (chars[i] == '_' || chars[i].is_ascii_alphanumeric()) { i += 1; }
+                while i < chars.len() && (chars[i] == '_' || chars[i].is_ascii_alphanumeric()) {
+                    i += 1;
+                }
                 out.push(Token::Ident(chars[start..i].iter().collect()));
             }
-            _ => return Err(AssembleError::InvalidExpression { line, text: text.to_string() }),
+            _ => {
+                return Err(AssembleError::InvalidExpression {
+                    line,
+                    text: text.to_string(),
+                })
+            }
         }
     }
     Ok(out)
@@ -83,8 +145,12 @@ struct Parser<'a> {
 impl Parser<'_> {
     fn comparison(&mut self) -> Result<Option<u16>, AssembleError> {
         let lhs = self.expr()?;
-        let Some(op) = self.tokens.get(self.pos).cloned() else { return Ok(lhs); };
-        if !matches!(op, Token::Eq | Token::Ne | Token::Le | Token::Ge) { return Ok(lhs); }
+        let Some(op) = self.tokens.get(self.pos).cloned() else {
+            return Ok(lhs);
+        };
+        if !matches!(op, Token::Eq | Token::Ne | Token::Le | Token::Ge) {
+            return Ok(lhs);
+        }
         self.pos += 1;
         let rhs = self.expr()?;
         Ok(match (lhs, rhs) {
@@ -102,11 +168,19 @@ impl Parser<'_> {
     fn expr(&mut self) -> Result<Option<u16>, AssembleError> {
         let mut lhs = self.unary()?;
         while let Some(token) = self.tokens.get(self.pos) {
-            let add = match token { Token::Plus => true, Token::Minus => false, _ => break };
+            let add = match token {
+                Token::Plus => true,
+                Token::Minus => false,
+                _ => break,
+            };
             self.pos += 1;
             let rhs = self.unary()?;
             lhs = match (lhs, rhs) {
-                (Some(a), Some(b)) => Some(if add { a.wrapping_add(b) } else { a.wrapping_sub(b) }),
+                (Some(a), Some(b)) => Some(if add {
+                    a.wrapping_add(b)
+                } else {
+                    a.wrapping_sub(b)
+                }),
                 _ => None,
             };
         }
@@ -115,15 +189,31 @@ impl Parser<'_> {
 
     fn unary(&mut self) -> Result<Option<u16>, AssembleError> {
         match self.tokens.get(self.pos) {
-            Some(Token::Low) => { self.pos += 1; Ok(self.unary()?.map(|v| v & 0xff)) }
-            Some(Token::High) => { self.pos += 1; Ok(self.unary()?.map(|v| v >> 8)) }
-            Some(Token::Minus) => { self.pos += 1; Ok(self.unary()?.map(|v| 0u16.wrapping_sub(v))) }
+            Some(Token::Low) => {
+                self.pos += 1;
+                Ok(self.unary()?.map(|v| v & 0xff))
+            }
+            Some(Token::High) => {
+                self.pos += 1;
+                Ok(self.unary()?.map(|v| v >> 8))
+            }
+            Some(Token::Minus) => {
+                self.pos += 1;
+                Ok(self.unary()?.map(|v| 0u16.wrapping_sub(v)))
+            }
             _ => self.primary(),
         }
     }
 
     fn primary(&mut self) -> Result<Option<u16>, AssembleError> {
-        let token = self.tokens.get(self.pos).cloned().ok_or_else(|| AssembleError::InvalidExpression { line: self.line, text: String::new() })?;
+        let token =
+            self.tokens
+                .get(self.pos)
+                .cloned()
+                .ok_or_else(|| AssembleError::InvalidExpression {
+                    line: self.line,
+                    text: String::new(),
+                })?;
         self.pos += 1;
         match token {
             Token::Number(v) => Ok(Some(v)),
@@ -131,12 +221,18 @@ impl Parser<'_> {
             Token::LParen => {
                 let v = self.expr()?;
                 if !matches!(self.tokens.get(self.pos), Some(Token::RParen)) {
-                    return Err(AssembleError::InvalidExpression { line: self.line, text: "missing ')'".into() });
+                    return Err(AssembleError::InvalidExpression {
+                        line: self.line,
+                        text: "missing ')'".into(),
+                    });
                 }
                 self.pos += 1;
                 Ok(v)
             }
-            _ => Err(AssembleError::InvalidExpression { line: self.line, text: "expected value".into() }),
+            _ => Err(AssembleError::InvalidExpression {
+                line: self.line,
+                text: "expected value".into(),
+            }),
         }
     }
 }

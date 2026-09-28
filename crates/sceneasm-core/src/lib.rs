@@ -2,25 +2,38 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
-pub mod opcodes;
-pub mod layout;
-pub mod expr;
-pub mod timing;
 pub mod c64;
 pub mod c64_registers;
+pub mod expr;
+pub mod layout;
+pub mod opcodes;
+pub mod timing;
 pub use opcodes::{
     opcode, opcode_by_byte, opcode_with_policy, AddressingMode, ExtraCycle, Opcode, OpcodeClass,
     UndocumentedPolicy, OPCODES, UNDOCUMENTED_OPCODES,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cpu { Mos6502, Mos6510 }
+pub enum Cpu {
+    Mos6502,
+    Mos6510,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Target { pub name: &'static str, pub cpu: Cpu, pub origin: u16 }
+pub struct Target {
+    pub name: &'static str,
+    pub cpu: Cpu,
+    pub origin: u16,
+}
 
 impl Target {
-    pub const fn c64() -> Self { Self { name: "c64", cpu: Cpu::Mos6510, origin: 0x0801 } }
+    pub const fn c64() -> Self {
+        Self {
+            name: "c64",
+            cpu: Cpu::Mos6510,
+            origin: 0x0801,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,15 +74,21 @@ pub struct Assembly {
 
 impl Assembly {
     pub fn has_errors(&self) -> bool {
-        self.diagnostics.iter().any(|d| d.severity == diagnostic::Severity::Error)
+        self.diagnostics
+            .iter()
+            .any(|d| d.severity == diagnostic::Severity::Error)
     }
 
     pub fn errors(&self) -> impl Iterator<Item = &diagnostic::Diagnostic> {
-        self.diagnostics.iter().filter(|d| d.severity == diagnostic::Severity::Error)
+        self.diagnostics
+            .iter()
+            .filter(|d| d.severity == diagnostic::Severity::Error)
     }
 
     pub fn warnings(&self) -> impl Iterator<Item = &diagnostic::Diagnostic> {
-        self.diagnostics.iter().filter(|d| d.severity == diagnostic::Severity::Warning)
+        self.diagnostics
+            .iter()
+            .filter(|d| d.severity == diagnostic::Severity::Warning)
     }
 }
 
@@ -90,11 +109,23 @@ pub enum AssembleError {
     #[error("assertion failed on line {line}: {expression}")]
     AssertionFailed { line: usize, expression: String },
     #[error("cycle budget exceeded on line {line}: worst case {actual} > budget {budget}")]
-    CycleBudgetExceeded { line: usize, actual: u64, budget: u64 },
+    CycleBudgetExceeded {
+        line: usize,
+        actual: u64,
+        budget: u64,
+    },
     #[error("invalid raster line on source line {source_line}: {raster_line}")]
-    InvalidRasterLine { source_line: usize, raster_line: u16 },
+    InvalidRasterLine {
+        source_line: usize,
+        raster_line: u16,
+    },
     #[error("raster budget exceeded on source line {source_line}: raster {raster_line}, worst case {actual} > {budget}")]
-    RasterBudgetExceeded { source_line: usize, raster_line: u16, actual: u64, budget: u16 },
+    RasterBudgetExceeded {
+        source_line: usize,
+        raster_line: u16,
+        actual: u64,
+        budget: u16,
+    },
     #[error("invalid VIC-II state on line {line}: {text}")]
     InvalidVicState { line: usize, text: String },
 }
@@ -103,7 +134,11 @@ pub fn assemble(source: &str, target: Target) -> Result<Assembly, AssembleError>
     assemble_with_policy(source, target, UndocumentedPolicy::Deny)
 }
 
-pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_policy: UndocumentedPolicy) -> Result<Assembly, AssembleError> {
+pub fn assemble_with_policy(
+    source: &str,
+    target: Target,
+    mut undocumented_policy: UndocumentedPolicy,
+) -> Result<Assembly, AssembleError> {
     let resolved = layout::layout(source, target.origin, undocumented_policy)?;
     let mut origin = resolved.origin;
     let mut pc = origin;
@@ -122,12 +157,15 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         };
         if let Some(name) = name.filter(|name| symbols.contains_key(*name)) {
             let column_start = raw.find(name).unwrap_or(0) + 1;
-            symbol_definitions.insert(name.to_string(), SourceSpan {
-                file_id: 0,
-                line: index + 1,
-                column_start,
-                column_end: column_start + name.len(),
-            });
+            symbol_definitions.insert(
+                name.to_string(),
+                SourceSpan {
+                    file_id: 0,
+                    line: index + 1,
+                    column_start,
+                    column_end: column_start + name.len(),
+                },
+            );
         }
     }
     let mut instructions = Vec::new();
@@ -139,9 +177,14 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
     for (index, raw) in source.lines().enumerate() {
         let line_no = index + 1;
         let line = raw.split(';').next().unwrap_or("").trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
 
-        if let Some(rest) = line.strip_prefix("* =").or_else(|| line.strip_prefix(".org")) {
+        if let Some(rest) = line
+            .strip_prefix("* =")
+            .or_else(|| line.strip_prefix(".org"))
+        {
             let value = parse_u16(rest.trim(), line_no)?;
             if bytes.is_empty() {
                 origin = value;
@@ -149,7 +192,10 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
                 continue;
             }
             if value < pc {
-                return Err(AssembleError::InvalidNumber { line: line_no, text: line.to_string() });
+                return Err(AssembleError::InvalidNumber {
+                    line: line_no,
+                    text: line.to_string(),
+                });
             }
             bytes.resize(bytes.len() + (value - pc) as usize, 0);
             pc = value;
@@ -166,8 +212,12 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         if let Some(rest) = line.strip_prefix(".raster") {
             if line.ends_with('{') {
                 let expression = rest.trim_end_matches('{').trim();
-                let raster_line = expr::eval(expression, &symbols, line_no)?
-                    .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: expression.to_string() })?;
+                let raster_line = expr::eval(expression, &symbols, line_no)?.ok_or_else(|| {
+                    AssembleError::UnresolvedSymbol {
+                        line: line_no,
+                        name: expression.to_string(),
+                    }
+                })?;
                 open_raster = Some((line_no, raster_line, instructions.len(), vic_state));
                 continue;
             }
@@ -177,26 +227,45 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             vic_state.display_enabled = match rest.trim().to_ascii_lowercase().as_str() {
                 "on" => true,
                 "off" => false,
-                _ => return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() }),
+                _ => {
+                    return Err(AssembleError::InvalidVicState {
+                        line: line_no,
+                        text: line.to_string(),
+                    })
+                }
             };
             continue;
         }
 
         if let Some(rest) = line.strip_prefix(".vic_yscroll") {
-            let value = expr::eval(rest.trim(), &symbols, line_no)?
-                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: rest.trim().to_string() })?;
+            let value = expr::eval(rest.trim(), &symbols, line_no)?.ok_or_else(|| {
+                AssembleError::UnresolvedSymbol {
+                    line: line_no,
+                    name: rest.trim().to_string(),
+                }
+            })?;
             if value > 7 {
-                return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() });
+                return Err(AssembleError::InvalidVicState {
+                    line: line_no,
+                    text: line.to_string(),
+                });
             }
             vic_state.y_scroll = value as u8;
             continue;
         }
 
         if let Some(rest) = line.strip_prefix(".vic_sprites") {
-            let value = expr::eval(rest.trim(), &symbols, line_no)?
-                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: rest.trim().to_string() })?;
+            let value = expr::eval(rest.trim(), &symbols, line_no)?.ok_or_else(|| {
+                AssembleError::UnresolvedSymbol {
+                    line: line_no,
+                    name: rest.trim().to_string(),
+                }
+            })?;
             if value > 0xff {
-                return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() });
+                return Err(AssembleError::InvalidVicState {
+                    line: line_no,
+                    text: line.to_string(),
+                });
             }
             vic_state.sprite_enable_mask = value as u8;
             continue;
@@ -204,17 +273,37 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
 
         if let Some(rest) = line.strip_prefix(".vic_sprite_y") {
             let mut parts = rest.split_whitespace();
-            let sprite_text = parts.next().ok_or_else(|| AssembleError::InvalidVicState { line: line_no, text: line.to_string() })?;
-            let y_text = parts.next().ok_or_else(|| AssembleError::InvalidVicState { line: line_no, text: line.to_string() })?;
+            let sprite_text = parts.next().ok_or_else(|| AssembleError::InvalidVicState {
+                line: line_no,
+                text: line.to_string(),
+            })?;
+            let y_text = parts.next().ok_or_else(|| AssembleError::InvalidVicState {
+                line: line_no,
+                text: line.to_string(),
+            })?;
             if parts.next().is_some() {
-                return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() });
+                return Err(AssembleError::InvalidVicState {
+                    line: line_no,
+                    text: line.to_string(),
+                });
             }
-            let sprite = expr::eval(sprite_text, &symbols, line_no)?
-                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: sprite_text.to_string() })?;
-            let y = expr::eval(y_text, &symbols, line_no)?
-                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: y_text.to_string() })?;
+            let sprite = expr::eval(sprite_text, &symbols, line_no)?.ok_or_else(|| {
+                AssembleError::UnresolvedSymbol {
+                    line: line_no,
+                    name: sprite_text.to_string(),
+                }
+            })?;
+            let y = expr::eval(y_text, &symbols, line_no)?.ok_or_else(|| {
+                AssembleError::UnresolvedSymbol {
+                    line: line_no,
+                    name: y_text.to_string(),
+                }
+            })?;
             if sprite > 7 || y > 0xff {
-                return Err(AssembleError::InvalidVicState { line: line_no, text: line.to_string() });
+                return Err(AssembleError::InvalidVicState {
+                    line: line_no,
+                    text: line.to_string(),
+                });
             }
             vic_state.sprite_y[sprite as usize] = y as u8;
             continue;
@@ -229,7 +318,12 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
                 "deny" => UndocumentedPolicy::Deny,
                 "stable" => UndocumentedPolicy::Stable,
                 "all" => UndocumentedPolicy::All,
-                _ => return Err(AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() }),
+                _ => {
+                    return Err(AssembleError::UnsupportedStatement {
+                        line: line_no,
+                        text: line.to_string(),
+                    })
+                }
             };
             continue;
         }
@@ -240,10 +334,17 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
 
         if let Some(rest) = line.strip_prefix(".assert") {
             let expression = rest.trim();
-            let value = expr::eval(expression, &symbols, line_no)?
-                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: expression.to_string() })?;
+            let value = expr::eval(expression, &symbols, line_no)?.ok_or_else(|| {
+                AssembleError::UnresolvedSymbol {
+                    line: line_no,
+                    name: expression.to_string(),
+                }
+            })?;
             if value == 0 {
-                return Err(AssembleError::AssertionFailed { line: line_no, expression: expression.to_string() });
+                return Err(AssembleError::AssertionFailed {
+                    line: line_no,
+                    expression: expression.to_string(),
+                });
             }
             continue;
         }
@@ -251,20 +352,30 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         if let Some(rest) = line.strip_prefix(".text") {
             let text = rest.trim();
             if text.len() >= 2 && text.starts_with('"') && text.ends_with('"') {
-                let payload = &text.as_bytes()[1..text.len()-1];
+                let payload = &text.as_bytes()[1..text.len() - 1];
                 bytes.extend_from_slice(payload);
                 pc = pc.wrapping_add(payload.len() as u16);
                 continue;
             }
-            return Err(AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() });
+            return Err(AssembleError::UnsupportedStatement {
+                line: line_no,
+                text: line.to_string(),
+            });
         }
 
         if let Some(rest) = line.strip_prefix(".byte") {
             for token in rest.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                let value = expr::eval(token, &symbols, line_no)?
-                    .ok_or_else(|| AssembleError::UnresolvedSymbol { line: line_no, name: token.to_string() })?;
+                let value = expr::eval(token, &symbols, line_no)?.ok_or_else(|| {
+                    AssembleError::UnresolvedSymbol {
+                        line: line_no,
+                        name: token.to_string(),
+                    }
+                })?;
                 if value > 0xff {
-                    return Err(AssembleError::InvalidNumber { line: line_no, text: token.to_string() });
+                    return Err(AssembleError::InvalidNumber {
+                        line: line_no,
+                        text: token.to_string(),
+                    });
                 }
                 bytes.push(value as u8);
                 pc = pc.wrapping_add(1);
@@ -279,23 +390,39 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             (upper.as_str(), None)
         };
 
-        let (mode, operand_value) = layout::choose_mode(mnemonic, operand, &symbols, undocumented_policy, line_no)?;
+        let (mode, operand_value) =
+            layout::choose_mode(mnemonic, operand, &symbols, undocumented_policy, line_no)?;
         if operand.is_some() && operand_value.is_none() {
-            return Err(AssembleError::UnresolvedSymbol { line: line_no, name: operand.unwrap().trim_start_matches('#').trim().to_string() });
+            return Err(AssembleError::UnresolvedSymbol {
+                line: line_no,
+                name: operand.unwrap().trim_start_matches('#').trim().to_string(),
+            });
         }
 
-        let opcode = opcode_with_policy(mnemonic, mode, undocumented_policy)
-            .ok_or_else(|| AssembleError::UnsupportedStatement { line: line_no, text: line.to_string() })?;
+        let opcode = opcode_with_policy(mnemonic, mode, undocumented_policy).ok_or_else(|| {
+            AssembleError::UnsupportedStatement {
+                line: line_no,
+                text: line.to_string(),
+            }
+        })?;
 
         let address = pc;
         bytes.push(opcode.code);
         match mode {
             AddressingMode::Implied | AddressingMode::Accumulator => {}
-            AddressingMode::Immediate | AddressingMode::ZeroPage | AddressingMode::ZeroPageX |
-            AddressingMode::ZeroPageY | AddressingMode::IndexedIndirect |
-            AddressingMode::IndirectIndexed => {
+            AddressingMode::Immediate
+            | AddressingMode::ZeroPage
+            | AddressingMode::ZeroPageX
+            | AddressingMode::ZeroPageY
+            | AddressingMode::IndexedIndirect
+            | AddressingMode::IndirectIndexed => {
                 let value = operand_value.unwrap();
-                if value > 0xff { return Err(AssembleError::InvalidNumber { line: line_no, text: operand.unwrap().into() }); }
+                if value > 0xff {
+                    return Err(AssembleError::InvalidNumber {
+                        line: line_no,
+                        text: operand.unwrap().into(),
+                    });
+                }
                 bytes.push(value as u8);
             }
             AddressingMode::Relative => {
@@ -303,12 +430,17 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
                 let next = pc.wrapping_add(2);
                 let delta = target as i32 - next as i32;
                 if !(-128..=127).contains(&delta) {
-                    return Err(AssembleError::InvalidNumber { line: line_no, text: operand.unwrap().into() });
+                    return Err(AssembleError::InvalidNumber {
+                        line: line_no,
+                        text: operand.unwrap().into(),
+                    });
                 }
                 bytes.push((delta as i8) as u8);
             }
-            AddressingMode::Absolute | AddressingMode::AbsoluteX | AddressingMode::AbsoluteY |
-            AddressingMode::Indirect => {
+            AddressingMode::Absolute
+            | AddressingMode::AbsoluteX
+            | AddressingMode::AbsoluteY
+            | AddressingMode::Indirect => {
                 let value = operand_value.unwrap();
                 bytes.extend_from_slice(&[value as u8, (value >> 8) as u8]);
             }
@@ -319,7 +451,12 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         let column_end = raw_line.len() + 1;
         instructions.push(InstructionInfo {
             address,
-            source: SourceSpan { file_id: 0, line: line_no, column_start, column_end },
+            source: SourceSpan {
+                file_id: 0,
+                line: line_no,
+                column_start,
+                column_end,
+            },
             expansion: source::ExpansionTrace::default(),
             opcode,
         });
@@ -333,8 +470,12 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
     for (source_line, raster_line, start, end, state) in raster_blocks {
         let range = timing::analyze(&instructions[start..end]);
         let profile = c64::C64Timing::pal();
-        let vic = profile.vic_line(raster_line, state)
-            .ok_or(AssembleError::InvalidRasterLine { source_line, raster_line })?;
+        let vic = profile
+            .vic_line(raster_line, state)
+            .ok_or(AssembleError::InvalidRasterLine {
+                source_line,
+                raster_line,
+            })?;
         let schedule = vic.bus.schedule(&instructions[start..end]);
         for scheduled in &schedule.instructions {
             if scheduled.stalled_cycles > 0 {
@@ -343,7 +484,10 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
                         "C64_VIC_STALL",
                         "VIC-II bus activity stretches instruction timing",
                     )
-                    .with_primary(scheduled.source.clone(), "instruction stalls on VIC-II bus ownership")
+                    .with_primary(
+                        scheduled.source.clone(),
+                        "instruction stalls on VIC-II bus ownership",
+                    )
                     .with_timing(diagnostic::TimingDiagnostic {
                         raster_line,
                         nominal_cycles: scheduled.nominal_cycles,
@@ -399,13 +543,23 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
     }
     for (index, raw) in source.lines().enumerate() {
         let line = raw.split(';').next().unwrap_or("").trim();
-        if line.starts_with(".raster") { continue; }
+        if line.starts_with(".raster") {
+            continue;
+        }
         if let Some(rest) = line.strip_prefix(".assert_cycles") {
             let rest = rest.trim();
-            let budget_text = rest.strip_prefix("<=").map(str::trim)
-                .ok_or_else(|| AssembleError::InvalidExpression { line: index + 1, text: rest.to_string() })?;
-            let budget = expr::eval(budget_text, &symbols, index + 1)?
-                .ok_or_else(|| AssembleError::UnresolvedSymbol { line: index + 1, name: budget_text.to_string() })? as u64;
+            let budget_text = rest.strip_prefix("<=").map(str::trim).ok_or_else(|| {
+                AssembleError::InvalidExpression {
+                    line: index + 1,
+                    text: rest.to_string(),
+                }
+            })?;
+            let budget = expr::eval(budget_text, &symbols, index + 1)?.ok_or_else(|| {
+                AssembleError::UnresolvedSymbol {
+                    line: index + 1,
+                    name: budget_text.to_string(),
+                }
+            })? as u64;
             if !cycle_range.fits(budget) {
                 let column_start = raw.len().saturating_sub(raw.trim_start().len()) + 1;
                 diagnostics.push(
@@ -425,10 +579,7 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
                         },
                         "cycle guarantee is exceeded",
                     )
-                    .with_note(format!(
-                        "best-case execution is {} cycles",
-                        cycle_range.min
-                    )),
+                    .with_note(format!("best-case execution is {} cycles", cycle_range.min)),
                 );
             }
         }
@@ -457,16 +608,44 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
                 }
             }
             ("STA", _) => {}
-            (mnemonic, _) if matches!(
-                mnemonic,
-                "ADC" | "AND" | "ASL" | "EOR" | "LAX" | "LDA" | "LSR" | "ORA" | "PLA"
-                    | "ROL" | "ROR" | "SBC" | "TXA" | "TYA"
-            ) => known_a = None,
+            (mnemonic, _)
+                if matches!(
+                    mnemonic,
+                    "ADC"
+                        | "AND"
+                        | "ASL"
+                        | "EOR"
+                        | "LAX"
+                        | "LDA"
+                        | "LSR"
+                        | "ORA"
+                        | "PLA"
+                        | "ROL"
+                        | "ROR"
+                        | "SBC"
+                        | "TXA"
+                        | "TYA"
+                ) =>
+            {
+                known_a = None
+            }
             _ => {}
         }
     }
 
-    Ok(Assembly { bytes, symbols, symbol_definitions, origin, instructions, cycles, cycle_range, raster_contracts, hardware_writes, source_map, diagnostics })
+    Ok(Assembly {
+        bytes,
+        symbols,
+        symbol_definitions,
+        origin,
+        instructions,
+        cycles,
+        cycle_range,
+        raster_contracts,
+        hardware_writes,
+        source_map,
+        diagnostics,
+    })
 }
 
 fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
@@ -478,7 +657,10 @@ fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
     } else {
         text.parse::<u16>()
     };
-    parsed.map_err(|_| AssembleError::InvalidNumber { line, text: text.to_string() })
+    parsed.map_err(|_| AssembleError::InvalidNumber {
+        line,
+        text: text.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -503,7 +685,8 @@ mod tests {
     }
 
     fn assembly_exposes_diagnostic_severity_views() {
-        let failed = assemble("lda $1234,x\nbne $10\n.assert_cycles <= 8\n", Target::c64()).unwrap();
+        let failed =
+            assemble("lda $1234,x\nbne $10\n.assert_cycles <= 8\n", Target::c64()).unwrap();
         assert!(failed.has_errors());
         assert_eq!(failed.errors().count(), 1);
         assert_eq!(failed.warnings().count(), 0);
@@ -516,10 +699,16 @@ mod tests {
     #[test]
     fn vic_stalls_emit_structured_source_diagnostics() {
         let mut source = ".vic_display on\n.vic_yscroll 0\n.raster 48 {\n".to_string();
-        for _ in 0..8 { source.push_str("nop\n"); }
+        for _ in 0..8 {
+            source.push_str("nop\n");
+        }
         source.push_str("}\n");
         let out = assemble(&source, Target::c64()).unwrap();
-        let diagnostic = out.diagnostics.iter().find(|d| d.code == "C64_VIC_STALL").unwrap();
+        let diagnostic = out
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "C64_VIC_STALL")
+            .unwrap();
         assert_eq!(diagnostic.severity, diagnostic::Severity::Info);
         assert_eq!(diagnostic.timing.as_ref().unwrap().raster_line, 48);
         assert!(diagnostic.primary.as_ref().unwrap().span.line >= 4);
@@ -535,9 +724,13 @@ mod tests {
 
     #[test]
     fn supports_text_and_forward_origin_gap() {
-        let out = assemble("* = $0801\n.byte 1,2\n.text \"AB\"\n* = $0808\n.byte 3\n", Target::c64()).unwrap();
+        let out = assemble(
+            "* = $0801\n.byte 1,2\n.text \"AB\"\n* = $0808\n.byte 3\n",
+            Target::c64(),
+        )
+        .unwrap();
         assert_eq!(out.origin, 0x0801);
-        assert_eq!(out.bytes, vec![1,2,b'A',b'B',0,0,0,3]);
+        assert_eq!(out.bytes, vec![1, 2, b'A', b'B', 0, 0, 0, 3]);
     }
 
     #[test]
@@ -552,7 +745,11 @@ mod tests {
 
     #[test]
     fn assembles_minimal_c64_code_and_tracks_cycles() {
-        let out = assemble(".org $080d\nstart:\n  sei\n  lda #$06\n  sta $d020\n  rts\n", Target::c64()).unwrap();
+        let out = assemble(
+            ".org $080d\nstart:\n  sei\n  lda #$06\n  sta $d020\n  rts\n",
+            Target::c64(),
+        )
+        .unwrap();
         assert_eq!(out.origin, 0x080d);
         assert_eq!(out.symbols["start"], 0x080d);
         assert_eq!(out.bytes, vec![0x78, 0xa9, 0x06, 0x8d, 0x20, 0xd0, 0x60]);
@@ -597,10 +794,16 @@ mod tests {
     #[test]
     fn raster_budget_violation_is_structured_error() {
         let mut source = ".vic_display on\n.vic_yscroll 0\n.raster 48 {\n".to_string();
-        for _ in 0..12 { source.push_str("rts\n"); }
+        for _ in 0..12 {
+            source.push_str("rts\n");
+        }
         source.push_str("}\n");
         let out = assemble(&source, Target::c64()).unwrap();
-        let diagnostic = out.diagnostics.iter().find(|d| d.code == "C64_RASTER_BUDGET").unwrap();
+        let diagnostic = out
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "C64_RASTER_BUDGET")
+            .unwrap();
         assert_eq!(diagnostic.severity, diagnostic::Severity::Error);
         assert_eq!(diagnostic.primary.as_ref().unwrap().span.line, 3);
         assert!(!out.raster_contracts[0].fits());
@@ -619,14 +822,19 @@ mod tests {
         assert_eq!(contract.scheduled_stall_cycles, 0);
         assert_eq!(contract.schedule.len(), 1);
         assert_eq!(contract.schedule[0].address, out.instructions[1].address);
-        assert_eq!(contract.schedule[0].source.line, out.instructions[1].source.line);
+        assert_eq!(
+            contract.schedule[0].source.line,
+            out.instructions[1].source.line
+        );
     }
 
     #[test]
     fn raster_schedule_reports_vic_stalls() {
         let source = ".vic_display on\n.vic_yscroll 0\n.raster 48 {\n";
         let mut owned = source.to_string();
-        for _ in 0..8 { owned.push_str("nop\n"); }
+        for _ in 0..8 {
+            owned.push_str("nop\n");
+        }
         owned.push_str("}\n");
         let out = assemble(&owned, Target::c64()).unwrap();
         let contract = &out.raster_contracts[0];
@@ -637,7 +845,11 @@ mod tests {
 
     #[test]
     fn raster_contract_keeps_per_instruction_schedule() {
-        let out = assemble(".vic_display off\n.raster 100 {\nlda #1\nnop\nrts\n}\n", Target::c64()).unwrap();
+        let out = assemble(
+            ".vic_display off\n.raster 100 {\nlda #1\nnop\nrts\n}\n",
+            Target::c64(),
+        )
+        .unwrap();
         let contract = &out.raster_contracts[0];
         assert_eq!(contract.schedule.len(), 3);
         assert_eq!(contract.schedule[0].nominal_cycles, 2);
@@ -683,7 +895,11 @@ mod tests {
 
     #[test]
     fn raster_blocks_are_independently_scoped() {
-        let out = assemble(".raster 100 {\nnop\n}\n.raster 101 {\nrts\n}\n", Target::c64()).unwrap();
+        let out = assemble(
+            ".raster 100 {\nnop\n}\n.raster 101 {\nrts\n}\n",
+            Target::c64(),
+        )
+        .unwrap();
         assert_eq!(out.raster_contracts[0].min_cycles, 2);
         assert_eq!(out.raster_contracts[1].min_cycles, 6);
     }
@@ -692,8 +908,13 @@ mod tests {
     fn cycle_contract_uses_worst_case_timing() {
         let ok = assemble("lda $1234,x\nbne $10\n.assert_cycles <= 9\n", Target::c64());
         assert!(ok.is_ok());
-        let failed = assemble("lda $1234,x\nbne $10\n.assert_cycles <= 8\n", Target::c64()).unwrap();
-        let diagnostic = failed.diagnostics.iter().find(|d| d.code == "CYCLE_BUDGET").unwrap();
+        let failed =
+            assemble("lda $1234,x\nbne $10\n.assert_cycles <= 8\n", Target::c64()).unwrap();
+        let diagnostic = failed
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "CYCLE_BUDGET")
+            .unwrap();
         assert_eq!(diagnostic.severity, diagnostic::Severity::Error);
         assert_eq!(diagnostic.primary.as_ref().unwrap().span.line, 3);
         assert_eq!(failed.cycle_range.max, 9);
@@ -717,7 +938,11 @@ mod tests {
 
     #[test]
     fn forward_reference_can_shrink_to_zero_page() {
-        let out = assemble(".org $0020\nlda table\nnop\ntable:\n.byte 1\n", Target::c64()).unwrap();
+        let out = assemble(
+            ".org $0020\nlda table\nnop\ntable:\n.byte 1\n",
+            Target::c64(),
+        )
+        .unwrap();
         assert_eq!(out.symbols["table"], 0x0023);
         assert_eq!(out.bytes, vec![0xa5, 0x23, 0xea, 0x01]);
     }
