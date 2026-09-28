@@ -108,7 +108,7 @@ impl LanguageServer for Backend {
             };
             let base = instruction.opcode.cycles as u16;
             let worst = base + extra;
-            let value = format!(
+            let mut value = format!(
                 "**{}**  \\nAddress: `${:04x}`  \\nMode: `{:?}`  \\nCycles: **{}**{}",
                 instruction.opcode.mnemonic,
                 instruction.address,
@@ -116,6 +116,26 @@ impl LanguageServer for Backend {
                 base,
                 if worst == base { String::new() } else { format!("–{}", worst) }
             );
+            if let Some(write) = assembly.hardware_writes.iter().find(|write| {
+                write.source.line == instruction.source.line
+                    && write.source.column_start == instruction.source.column_start
+            }) {
+                value.push_str(&format!(
+                    "\\n\\n**Hardware write:** `{}` (`${:04x}`) = `#${:02x}`",
+                    write.register.name, write.register.address, write.value
+                ));
+                let decoded: Vec<_> =
+                    sceneasm_core::c64_registers::decode_value(write.register.address, write.value).collect();
+                if !decoded.is_empty() {
+                    value.push_str("\\n\\n**Decoded value**");
+                    for field in decoded {
+                        value.push_str(&format!(
+                            "\\n- `{}` **{}** = `{}` — {}",
+                            field.field.bits, field.field.name, field.value, field.field.description
+                        ));
+                    }
+                }
+            }
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
                 range: None,
