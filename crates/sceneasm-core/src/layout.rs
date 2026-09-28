@@ -12,8 +12,9 @@ pub fn resolve_value(
     text: &str,
     symbols: &BTreeMap<String, u16>,
     line: usize,
+    pc: u16,
 ) -> Result<Option<u16>, AssembleError> {
-    expr::eval(text, symbols, line)
+    expr::eval_at(text, symbols, line, pc)
 }
 
 pub fn choose_mode(
@@ -22,6 +23,7 @@ pub fn choose_mode(
     symbols: &BTreeMap<String, u16>,
     policy: UndocumentedPolicy,
     line: usize,
+    pc: u16,
 ) -> Result<(AddressingMode, Option<u16>), AssembleError> {
     match operand {
         None if opcode_with_policy(mnemonic, AddressingMode::Accumulator, policy).is_some()
@@ -31,11 +33,11 @@ pub fn choose_mode(
         }
         None => Ok((AddressingMode::Implied, None)),
         Some(arg) if arg.starts_with('#') => {
-            let value = resolve_value(arg.trim_start_matches('#').trim(), symbols, line)?;
+            let value = resolve_value(arg.trim_start_matches('#').trim(), symbols, line, pc)?;
             Ok((AddressingMode::Immediate, value))
         }
         Some(arg) => {
-            let value = resolve_value(arg, symbols, line)?;
+            let value = resolve_value(arg, symbols, line, pc)?;
             if opcode_with_policy(mnemonic, AddressingMode::Relative, policy).is_some() {
                 return Ok((AddressingMode::Relative, value));
             }
@@ -77,7 +79,7 @@ pub fn layout(
                 .strip_prefix("* =")
                 .or_else(|| line.strip_prefix(".org"))
             {
-                let value = resolve_value(rest.trim(), &previous, line_no)?.ok_or_else(|| {
+                let value = resolve_value(rest.trim(), &previous, line_no, pc)?.ok_or_else(|| {
                     AssembleError::UnresolvedSymbol {
                         line: line_no,
                         name: rest.trim().to_string(),
@@ -95,7 +97,7 @@ pub fn layout(
                         .next()
                         .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
                     {
-                        if let Some(value) = expr::eval(expression.trim(), &previous, line_no)? {
+                        if let Some(value) = expr::eval_at(expression.trim(), &previous, line_no, pc)? {
                             if symbols.insert(name.to_string(), value).is_some() {
                                 return Err(AssembleError::DuplicateSymbol {
                                     line: line_no,
@@ -168,7 +170,7 @@ pub fn layout(
             } else {
                 (upper.as_str(), None)
             };
-            let (mode, _) = choose_mode(mnemonic, operand, &previous, current_policy, line_no)?;
+            let (mode, _) = choose_mode(mnemonic, operand, &previous, current_policy, line_no, pc)?;
             let op = opcode_with_policy(mnemonic, mode, current_policy).ok_or_else(|| {
                 AssembleError::UnsupportedStatement {
                     line: line_no,
