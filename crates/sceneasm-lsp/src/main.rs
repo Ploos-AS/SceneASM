@@ -228,6 +228,40 @@ impl LanguageServer for Backend {
         };
         let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
         let mut hints = Vec::new();
+        for instruction in &assembly.instructions {
+            let line_index = instruction.source.line.saturating_sub(1) as u32;
+            if line_index < params.range.start.line || line_index > params.range.end.line {
+                continue;
+            }
+            let extra = match instruction.opcode.extra_cycle {
+                sceneasm_core::ExtraCycle::None => 0,
+                sceneasm_core::ExtraCycle::PageCross | sceneasm_core::ExtraCycle::BranchTaken => 1,
+                sceneasm_core::ExtraCycle::BranchTakenAndPageCross => 2,
+            };
+            let base = instruction.opcode.cycles as u16;
+            let worst = base + extra;
+            let label = if worst == base {
+                format!("{}c", base)
+            } else {
+                format!("{}–{}c", base, worst)
+            };
+            hints.push(InlayHint {
+                position: Position::new(
+                    line_index,
+                    instruction.source.column_end.saturating_sub(1) as u32,
+                ),
+                label: InlayHintLabel::String(label),
+                kind: Some(InlayHintKind::PARAMETER),
+                text_edits: None,
+                tooltip: Some(InlayHintTooltip::String(format!(
+                    "{} {:?} timing",
+                    instruction.opcode.mnemonic, instruction.opcode.mode
+                ))),
+                padding_left: Some(true),
+                padding_right: Some(false),
+                data: None,
+            });
+        }
         for write in &assembly.hardware_writes {
             let line_index = write.source.line.saturating_sub(1) as u32;
             if line_index < params.range.start.line || line_index > params.range.end.line {
