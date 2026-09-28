@@ -172,21 +172,74 @@ impl LanguageServer for Backend {
 
         let address_token = {
             let bytes = line.as_bytes();
-            let mut token_start = byte.min(bytes.len());
-            while token_start > 0 && (bytes[token_start - 1] as char).is_ascii_hexdigit() { token_start -= 1; }
-            if token_start > 0 && bytes[token_start - 1] == b'
+            let cursor = byte.min(bytes.len());
+            let mut token_start = cursor;
+            while token_start > 0 && (bytes[token_start - 1] as char).is_ascii_hexdigit() {
+                token_start -= 1;
+            }
+            if token_start > 0 && bytes[token_start - 1] == b'$' {
+                token_start -= 1;
+            }
+            let mut token_end = cursor;
+            while token_end < bytes.len() && (bytes[token_end] as char).is_ascii_hexdigit() {
+                token_end += 1;
+            }
+            &line[token_start..token_end]
+        };
+        if let Some(hex) = address_token.strip_prefix('$') {
+            if let Ok(address) = u16::from_str_radix(hex, 16) {
+                if let Some(register) = sceneasm_core::c64_registers::register_by_address(address) {
+                    let mut value = format!(
+                        "**{}** — C64 hardware register  \\nAddress: `${:04x}`  \\n{}",
+                        register.name, register.address, register.description
+                    );
+                    let fields: Vec<_> =
+                        sceneasm_core::c64_registers::bit_fields(register.address).collect();
+                    if !fields.is_empty() {
+                        value.push_str("\\n\\n**Bits**");
+                        for field in fields {
+                            value.push_str(&format!(
+                                "\\n- `{}` **{}** — {}",
+                                field.bits, field.name, field.description
+                            ));
+                        }
+                    }
+                    return Ok(Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value,
+                        }),
+                        range: None,
+                    }));
+                }
+            }
+        }
+
+        let Some(value) = assembly.symbols.get(name) else { return Ok(None); };
         let Some(span) = assembly.symbol_definitions.get(name) else { return Ok(None); };
-        let kind = if text.lines().nth(span.line - 1).unwrap_or("").split(';').next().unwrap_or("").trim().ends_with(':') {
+        let kind = if text
+            .lines()
+            .nth(span.line - 1)
+            .unwrap_or("")
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .ends_with(':')
+        {
             "Label"
         } else {
             "Constant"
         };
-        let value = format!(
+        let hover_value = format!(
             "**{}** — {}  \\nValue: `${:04x}` / {}  \\nDefined: line {}",
             name, kind, value, value, span.line
         );
         Ok(Some(Hover {
-            contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: hover_value,
+            }),
             range: Some(Range {
                 start: Position::new(position.line, start as u32),
                 end: Position::new(position.line, end as u32),
