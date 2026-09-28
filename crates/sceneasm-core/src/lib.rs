@@ -40,6 +40,13 @@ pub struct InstructionInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HardwareWrite {
+    pub source: SourceSpan,
+    pub register: c64_registers::HardwareRegister,
+    pub value: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assembly {
     pub bytes: Vec<u8>,
     pub symbols: BTreeMap<String, u16>,
@@ -49,6 +56,7 @@ pub struct Assembly {
     pub cycles: u64,
     pub cycle_range: timing::CycleRange,
     pub raster_contracts: Vec<c64::RasterContract>,
+    pub hardware_writes: Vec<HardwareWrite>,
 }
 
 impl Assembly {
@@ -426,7 +434,39 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
         }
     }
 
-    Ok(Assembly { bytes, symbols, symbol_definitions, origin, instructions, cycles, cycle_range, raster_contracts, source_map, diagnostics })
+    let mut hardware_writes = Vec::new();
+    let mut known_a: Option<u8> = None;
+    for instruction in &instructions {
+        let offset = instruction.address.wrapping_sub(origin) as usize;
+        match (instruction.opcode.mnemonic, instruction.opcode.mode) {
+            ("LDA", AddressingMode::Immediate) => {
+                known_a = bytes.get(offset + 1).copied();
+            }
+            ("STA", AddressingMode::Absolute) => {
+                if let (Some(value), Some(lo), Some(hi)) =
+                    (known_a, bytes.get(offset + 1), bytes.get(offset + 2))
+                {
+                    let address = u16::from_le_bytes([*lo, *hi]);
+                    if let Some(register) = c64_registers::register_by_address(address) {
+                        hardware_writes.push(HardwareWrite {
+                            source: instruction.source.clone(),
+                            register,
+                            value,
+                        });
+                    }
+                }
+            }
+            ("STA", _) => {}
+            (mnemonic, _) if matches!(
+                mnemonic,
+                "ADC" | "AND" | "ASL" | "EOR" | "LAX" | "LDA" | "LSR" | "ORA" | "PLA"
+                    | "ROL" | "ROR" | "SBC" | "TXA" | "TYA"
+            ) => known_a = None,
+            _ => {}
+        }
+    }
+
+    Ok(Assembly { bytes, symbols, symbol_definitions, origin, instructions, cycles, cycle_range, raster_contracts, hardware_writes, source_map, diagnostics })
 }
 
 fn parse_u16(text: &str, line: usize) -> Result<u16, AssembleError> {
@@ -446,6 +486,22 @@ mod tests {
     use super::*;
 
     #[test]
+    #[test]
+    fn tracks_known_immediate_accumulator_write_to_hardware() {
+        let assembly = assemble("lda #$1b\nsta $d011\n", Target::c64()).unwrap();
+        assert_eq!(assembly.hardware_writes.len(), 1);
+        let write = &assembly.hardware_writes[0];
+        assert_eq!(write.register.name, "VIC_CTRL1");
+        assert_eq!(write.value, 0x1b);
+        assert_eq!(write.source.line, 2);
+    }
+
+    #[test]
+    fn unknown_accumulator_value_is_not_reported_as_hardware_write() {
+        let assembly = assemble("lda #$1b\neor #$ff\nsta $d011\n", Target::c64()).unwrap();
+        assert!(assembly.hardware_writes.is_empty());
+    }
+
     fn assembly_exposes_diagnostic_severity_views() {
         let failed = assemble("lda $1234,x\nbne $10\n.assert_cycles <= 8\n", Target::c64()).unwrap();
         assert!(failed.has_errors());
