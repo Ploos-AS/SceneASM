@@ -63,6 +63,7 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -167,6 +168,58 @@ impl LanguageServer for Backend {
                 end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
             },
         })))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let position = params.text_document_position.position;
+        let uri = params.text_document_position.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let Some(definition) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+
+        let mut locations = Vec::new();
+        for (line_index, source_line) in text.lines().enumerate() {
+            let code = source_line.split(';').next().unwrap_or("");
+            let bytes = code.as_bytes();
+            let mut index = 0;
+            while index < bytes.len() {
+                let ch = bytes[index] as char;
+                if ch == '_' || ch.is_ascii_alphabetic() {
+                    let token_start = index;
+                    index += 1;
+                    while index < bytes.len() {
+                        let ch = bytes[index] as char;
+                        if ch == '_' || ch.is_ascii_alphanumeric() { index += 1; } else { break; }
+                    }
+                    if &code[token_start..index] == name {
+                        let is_declaration = line_index + 1 == definition.line
+                            && token_start + 1 == definition.column_start;
+                        if params.context.include_declaration || !is_declaration {
+                            locations.push(Location {
+                                uri: uri.clone(),
+                                range: Range {
+                                    start: Position::new(line_index as u32, token_start as u32),
+                                    end: Position::new(line_index as u32, index as u32),
+                                },
+                            });
+                        }
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        Ok(Some(locations))
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
