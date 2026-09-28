@@ -16,7 +16,7 @@ struct Cli {
     command: Command,
 }
 
-#[derive(Debug, Subcommand, Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum DiagnosticFormat {
     Text,
     Json,
@@ -37,6 +37,7 @@ struct JsonDiagnostic<'a> {
     actual_cycles: Option<u16>,
 }
 
+#[derive(Debug, Subcommand)]
 enum Command {
     Build {
         input: PathBuf,
