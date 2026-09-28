@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use sceneasm_core::{assemble, Target};
+use sceneasm_core::{assemble, render, Assembly, Target};
 
 #[derive(Debug, Parser)]
 #[command(name = "sceneasm", version, about = "Scene-first native assembler toolchain")]
@@ -38,6 +38,10 @@ fn main() -> Result<()> {
             let source = fs::read_to_string(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
             let assembly = assemble(&source, target)?;
+            print_diagnostics(&assembly);
+            if assembly.has_errors() {
+                anyhow::bail!("build aborted: {} error diagnostic(s)", assembly.errors().count());
+            }
             let output = output.unwrap_or_else(|| input.with_extension("prg"));
 
             let mut prg = Vec::with_capacity(assembly.bytes.len() + 2);
@@ -69,6 +73,10 @@ fn main() -> Result<()> {
             let source = fs::read_to_string(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
             let assembly = assemble(&source, target)?;
+            print_diagnostics(&assembly);
+            if assembly.has_errors() {
+                anyhow::bail!("check failed: {} error diagnostic(s)", assembly.errors().count());
+            }
             println!(
                 "ok: {} bytes, origin ${:04x}, {} symbols",
                 assembly.bytes.len(),
@@ -84,5 +92,11 @@ fn parse_target(name: &str) -> Result<Target> {
     match name {
         "c64" => Ok(Target::c64()),
         other => anyhow::bail!("unsupported target: {other}"),
+    }
+}
+
+fn print_diagnostics(assembly: &Assembly) {
+    for diagnostic in &assembly.diagnostics {
+        eprintln!("{}", render::render(diagnostic, &assembly.source_map));
     }
 }
