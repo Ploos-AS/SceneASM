@@ -11,12 +11,20 @@ pub struct SourceMap {
 
 impl SourceMap {
     pub fn new(main_name: impl Into<String>) -> Self {
-        Self { files: vec![SourceFile { id: 0, name: main_name.into() }] }
+        Self {
+            files: vec![SourceFile {
+                id: 0,
+                name: main_name.into(),
+            }],
+        }
     }
 
     pub fn add_file(&mut self, name: impl Into<String>) -> u32 {
         let id = self.files.len() as u32;
-        self.files.push(SourceFile { id, name: name.into() });
+        self.files.push(SourceFile {
+            id,
+            name: name.into(),
+        });
         id
     }
 
@@ -30,7 +38,9 @@ impl SourceMap {
 }
 
 impl Default for SourceMap {
-    fn default() -> Self { Self::new("<input>") }
+    fn default() -> Self {
+        Self::new("<input>")
+    }
 }
 
 #[cfg(test)]
@@ -91,8 +101,18 @@ mod expansion_tests {
         trace.push(ExpansionFrame {
             kind: ExpansionKind::Macro,
             name: "stable_raster".into(),
-            call_site: crate::SourceSpan { file_id: 0, line: 73, column_start: 5, column_end: 18 },
-            definition_site: Some(crate::SourceSpan { file_id: 1, line: 21, column_start: 1, column_end: 14 }),
+            call_site: crate::SourceSpan {
+                file_id: 0,
+                line: 73,
+                column_start: 5,
+                column_end: 18,
+            },
+            definition_site: Some(crate::SourceSpan {
+                file_id: 1,
+                line: 21,
+                column_start: 1,
+                column_end: 14,
+            }),
         });
         assert_eq!(trace.outermost_call_site().unwrap().line, 73);
         assert_eq!(trace.innermost_call_site().unwrap().line, 73);

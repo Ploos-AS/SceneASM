@@ -59,7 +59,10 @@ impl Diagnostic {
     }
 
     pub fn with_primary(mut self, span: SourceSpan, message: impl Into<String>) -> Self {
-        self.primary = Some(Label { span, message: Some(message.into()) });
+        self.primary = Some(Label {
+            span,
+            message: Some(message.into()),
+        });
         self
     }
 
@@ -80,7 +83,12 @@ mod tests {
 
     #[test]
     fn structured_timing_diagnostic_keeps_editor_data() {
-        let span = SourceSpan { file_id: 0, line: 37, column_start: 5, column_end: 17 };
+        let span = SourceSpan {
+            file_id: 0,
+            line: 37,
+            column_start: 5,
+            column_end: 17,
+        };
         let diagnostic = Diagnostic::info("C64_TIMING", "VIC-II stalls instruction")
             .with_primary(span.clone(), "instruction is stretched here")
             .with_note("consider moving work outside the badline window")

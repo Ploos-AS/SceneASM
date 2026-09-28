@@ -79,12 +79,13 @@ pub fn layout(
                 .strip_prefix("* =")
                 .or_else(|| line.strip_prefix(".org"))
             {
-                let value = resolve_value(rest.trim(), &previous, line_no, pc)?.ok_or_else(|| {
-                    AssembleError::UnresolvedSymbol {
-                        line: line_no,
-                        name: rest.trim().to_string(),
-                    }
-                })?;
+                let value =
+                    resolve_value(rest.trim(), &previous, line_no, pc)?.ok_or_else(|| {
+                        AssembleError::UnresolvedSymbol {
+                            line: line_no,
+                            name: rest.trim().to_string(),
+                        }
+                    })?;
                 current_origin = value;
                 pc = value;
                 continue;
@@ -97,7 +98,9 @@ pub fn layout(
                         .next()
                         .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
                     {
-                        if let Some(value) = expr::eval_at(expression.trim(), &previous, line_no, pc)? {
+                        if let Some(value) =
+                            expr::eval_at(expression.trim(), &previous, line_no, pc)?
+                        {
                             if symbols.insert(name.to_string(), value).is_some() {
                                 return Err(AssembleError::DuplicateSymbol {
                                     line: line_no,

@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
-mod diagnostic;
-mod source;
 pub mod c64;
 pub mod c64_registers;
+mod diagnostic;
 pub mod expr;
 pub mod layout;
 pub mod opcodes;
+mod source;
 pub mod timing;
 pub use opcodes::{
     opcode, opcode_by_byte, opcode_with_policy, AddressingMode, ExtraCycle, Opcode, OpcodeClass,
@@ -396,8 +396,14 @@ pub fn assemble_with_policy(
             (upper.as_str(), None)
         };
 
-        let (mode, operand_value) =
-            layout::choose_mode(mnemonic, operand, &symbols, undocumented_policy, line_no, pc)?;
+        let (mode, operand_value) = layout::choose_mode(
+            mnemonic,
+            operand,
+            &symbols,
+            undocumented_policy,
+            line_no,
+            pc,
+        )?;
         if operand.is_some() && operand_value.is_none() {
             return Err(AssembleError::UnresolvedSymbol {
                 line: line_no,
