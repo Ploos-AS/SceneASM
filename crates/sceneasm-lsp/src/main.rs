@@ -65,6 +65,7 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions { prepare_provider: Some(true), work_done_progress_options: WorkDoneProgressOptions::default() })),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -169,6 +170,38 @@ impl LanguageServer for Backend {
                 end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
             },
         })))
+    }
+
+    async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let mut symbols = Vec::new();
+        for (name, span) in &assembly.symbol_definitions {
+            let source_line = text.lines().nth(span.line - 1).unwrap_or("");
+            let code = source_line.split(';').next().unwrap_or("").trim();
+            let is_label = code.ends_with(':');
+            let range = Range {
+                start: Position::new((span.line - 1) as u32, (span.column_start - 1) as u32),
+                end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
+            };
+            symbols.push(DocumentSymbol {
+                name: name.clone(),
+                detail: assembly.symbols.get(name).map(|value| format!("${:04x}", value)),
+                kind: if is_label { SymbolKind::FUNCTION } else { SymbolKind::CONSTANT },
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            });
+        }
+        symbols.sort_by_key(|symbol| (symbol.range.start.line, symbol.range.start.character));
+        Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 
     async fn prepare_rename(&self, params: TextDocumentPositionParams) -> Result<Option<PrepareRenameResponse>> {
