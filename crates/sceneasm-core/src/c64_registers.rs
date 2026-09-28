@@ -5,6 +5,14 @@ pub struct HardwareRegister {
     pub description: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegisterBitField {
+    pub register: u16,
+    pub bits: &'static str,
+    pub name: &'static str,
+    pub description: &'static str,
+}
+
 pub const VIC_REGISTERS: &[HardwareRegister] = &[
     HardwareRegister { name: "VIC_SPR0_X", address: 0xd000, description: "Sprite 0 X position" },
     HardwareRegister { name: "VIC_SPR0_Y", address: 0xd001, description: "Sprite 0 Y position" },
@@ -74,6 +82,44 @@ pub const CIA2_REGISTERS: &[HardwareRegister] = &[
     HardwareRegister { name: "CIA2_CRA", address: 0xdd0e, description: "CIA2 timer A control" },
     HardwareRegister { name: "CIA2_CRB", address: 0xdd0f, description: "CIA2 timer B control" },
 ];
+
+pub const BIT_FIELDS: &[RegisterBitField] = &[
+    RegisterBitField { register: 0xd011, bits: "7", name: "RST8", description: "Raster compare bit 8" },
+    RegisterBitField { register: 0xd011, bits: "6", name: "ECM", description: "Extended color text mode" },
+    RegisterBitField { register: 0xd011, bits: "5", name: "BMM", description: "Bitmap mode" },
+    RegisterBitField { register: 0xd011, bits: "4", name: "DEN", description: "Display enable" },
+    RegisterBitField { register: 0xd011, bits: "3", name: "RSEL", description: "24/25 row select" },
+    RegisterBitField { register: 0xd011, bits: "2-0", name: "YSCROLL", description: "Fine vertical scroll" },
+    RegisterBitField { register: 0xd016, bits: "4", name: "MCM", description: "Multicolor mode" },
+    RegisterBitField { register: 0xd016, bits: "3", name: "CSEL", description: "38/40 column select" },
+    RegisterBitField { register: 0xd016, bits: "2-0", name: "XSCROLL", description: "Fine horizontal scroll" },
+    RegisterBitField { register: 0xd018, bits: "7-4", name: "VM", description: "Screen memory pointer within VIC bank" },
+    RegisterBitField { register: 0xd018, bits: "3-1", name: "CB", description: "Character/bitmap memory pointer within VIC bank" },
+    RegisterBitField { register: 0xd019, bits: "7", name: "IRQ", description: "VIC-II IRQ status" },
+    RegisterBitField { register: 0xd019, bits: "3", name: "LP", description: "Light pen IRQ flag" },
+    RegisterBitField { register: 0xd019, bits: "2", name: "MMC", description: "Sprite-sprite collision IRQ flag" },
+    RegisterBitField { register: 0xd019, bits: "1", name: "MBC", description: "Sprite-background collision IRQ flag" },
+    RegisterBitField { register: 0xd019, bits: "0", name: "RST", description: "Raster IRQ flag" },
+    RegisterBitField { register: 0xd01a, bits: "3-0", name: "IRQ_ENABLE", description: "Enable VIC-II LP/MMC/MBC/raster IRQ sources" },
+    RegisterBitField { register: 0xd404, bits: "7", name: "NOISE", description: "Noise waveform" },
+    RegisterBitField { register: 0xd404, bits: "6", name: "PULSE", description: "Pulse waveform" },
+    RegisterBitField { register: 0xd404, bits: "5", name: "SAW", description: "Sawtooth waveform" },
+    RegisterBitField { register: 0xd404, bits: "4", name: "TRI", description: "Triangle waveform" },
+    RegisterBitField { register: 0xd404, bits: "3", name: "TEST", description: "Test bit" },
+    RegisterBitField { register: 0xd404, bits: "2", name: "RING", description: "Ring modulation" },
+    RegisterBitField { register: 0xd404, bits: "1", name: "SYNC", description: "Oscillator synchronization" },
+    RegisterBitField { register: 0xd404, bits: "0", name: "GATE", description: "Envelope gate" },
+    RegisterBitField { register: 0xd418, bits: "7", name: "3OFF", description: "Disconnect voice 3 from direct output" },
+    RegisterBitField { register: 0xd418, bits: "6-4", name: "MODE", description: "High-pass, band-pass and low-pass filter enables" },
+    RegisterBitField { register: 0xd418, bits: "3-0", name: "VOL", description: "Master volume" },
+    RegisterBitField { register: 0xdc0d, bits: "7", name: "SETCLR", description: "Set/clear selected interrupt mask bits when written" },
+    RegisterBitField { register: 0xdc0d, bits: "4-0", name: "IRQ", description: "CIA1 FLAG/serial/timer B/timer A interrupt sources" },
+    RegisterBitField { register: 0xdd00, bits: "1-0", name: "VIC_BANK", description: "Inverted VIC-II 16 KiB bank selection" },
+];
+
+pub fn bit_fields(address: u16) -> impl Iterator<Item = RegisterBitField> {
+    BIT_FIELDS.iter().copied().filter(move |field| field.register == address)
+}
 
 pub fn registers() -> impl Iterator<Item = HardwareRegister> {
     VIC_REGISTERS.iter()
