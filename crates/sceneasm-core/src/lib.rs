@@ -459,8 +459,8 @@ pub fn assemble_with_policy(
         }
         pc = pc.wrapping_add(opcode.bytes as u16);
         cycles += opcode.cycles as u64;
-        let column_start = raw_line.len().saturating_sub(raw_line.trim_start().len()) + 1;
-        let column_end = raw_line.len() + 1;
+        let column_start = raw.len().saturating_sub(raw.trim_start().len()) + 1;
+        let column_end = raw.len() + 1;
         instructions.push(InstructionInfo {
             address,
             source: SourceSpan {
