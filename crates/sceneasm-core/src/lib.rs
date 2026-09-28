@@ -362,7 +362,29 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             let budget = expr::eval(budget_text, &symbols, index + 1)?
                 .ok_or_else(|| AssembleError::UnresolvedSymbol { line: index + 1, name: budget_text.to_string() })? as u64;
             if !cycle_range.fits(budget) {
-                return Err(AssembleError::CycleBudgetExceeded { line: index + 1, actual: cycle_range.max, budget });
+                let column_start = raw.len().saturating_sub(raw.trim_start().len()) + 1;
+                diagnostics.push(
+                    diagnostic::Diagnostic::error(
+                        "CYCLE_BUDGET",
+                        format!(
+                            "worst-case execution requires {} cycles but budget is {}",
+                            cycle_range.max, budget
+                        ),
+                    )
+                    .with_primary(
+                        SourceSpan {
+                            file_id: 0,
+                            line: index + 1,
+                            column_start,
+                            column_end: raw.len() + 1,
+                        },
+                        "cycle guarantee is exceeded",
+                    )
+                    .with_note(format!(
+                        "best-case execution is {} cycles",
+                        cycle_range.min
+                    )),
+                );
             }
         }
     }
@@ -565,8 +587,11 @@ mod tests {
     fn cycle_contract_uses_worst_case_timing() {
         let ok = assemble("lda $1234,x\nbne $10\n.assert_cycles <= 9\n", Target::c64());
         assert!(ok.is_ok());
-        let failed = assemble("lda $1234,x\nbne $10\n.assert_cycles <= 8\n", Target::c64());
-        assert!(matches!(failed, Err(AssembleError::CycleBudgetExceeded { actual: 9, budget: 8, .. })));
+        let failed = assemble("lda $1234,x\nbne $10\n.assert_cycles <= 8\n", Target::c64()).unwrap();
+        let diagnostic = failed.diagnostics.iter().find(|d| d.code == "CYCLE_BUDGET").unwrap();
+        assert_eq!(diagnostic.severity, diagnostic::Severity::Error);
+        assert_eq!(diagnostic.primary.as_ref().unwrap().span.line, 3);
+        assert_eq!(failed.cycle_range.max, 9);
     }
 
     #[test]
