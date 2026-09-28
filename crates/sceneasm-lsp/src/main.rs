@@ -128,6 +128,648 @@ impl LanguageServer for Backend {
         let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
         let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
         let name = &line[start..end];
+        if let Some(register) = sceneasm_core::c64_registers::register_by_name(name) {
+            let value = format!(
+                "**{}** — VIC-II register  \\nAddress: `${:04x}`  \\n{}",
+                register.name, register.address, register.description
+            );
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
+                range: Some(Range {
+                    start: Position::new(position.line, start as u32),
+                    end: Position::new(position.line, end as u32),
+                }),
+            }));
+        }
+
+        let address_token = {
+            let bytes = line.as_bytes();
+            let mut token_start = byte.min(bytes.len());
+            while token_start > 0 && (bytes[token_start - 1] as char).is_ascii_hexdigit() { token_start -= 1; }
+            if token_start > 0 && bytes[token_start - 1] == b'
+        let Some(span) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+        let kind = if text.lines().nth(span.line - 1).unwrap_or("").split(';').next().unwrap_or("").trim().ends_with(':') {
+            "Label"
+        } else {
+            "Constant"
+        };
+        let value = format!(
+            "**{}** — {}  \\nValue: `${:04x}` / {}  \\nDefined: line {}",
+            name, kind, value, value, span.line
+        );
+        Ok(Some(Hover {
+            contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
+            range: Some(Range {
+                start: Position::new(position.line, start as u32),
+                end: Position::new(position.line, end as u32),
+            }),
+        }))
+    }
+
+    async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
+        let position = params.text_document_position_params.position;
+        let uri = params.text_document_position_params.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let Some(span) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+        Ok(Some(GotoDefinitionResponse::Scalar(Location {
+            uri,
+            range: Range {
+                start: Position::new((span.line - 1) as u32, (span.column_start - 1) as u32),
+                end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
+            },
+        })))
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let mut items = Vec::new();
+        let mut mnemonics = std::collections::BTreeSet::new();
+        for opcode in sceneasm_core::OPCODES {
+            if mnemonics.insert(opcode.mnemonic) {
+                items.push(CompletionItem {
+                    label: opcode.mnemonic.to_ascii_lowercase(),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    detail: Some("MOS 6502/6510 instruction".into()),
+                    ..CompletionItem::default()
+                });
+            }
+        }
+        for directive in [
+            ".org", ".byte", ".text", ".assert", ".assert_cycles", ".raster",
+            ".undocumented", ".vic_display", ".vic_yscroll", ".vic_sprites", ".vic_sprite_y",
+        ] {
+            items.push(CompletionItem {
+                label: directive.into(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("SceneASM directive".into()),
+                ..CompletionItem::default()
+            });
+        }
+        for register in sceneasm_core::c64_registers::VIC_REGISTERS {
+            items.push(CompletionItem {
+                label: register.name.into(),
+                kind: Some(CompletionItemKind::VALUE),
+                detail: Some(format!("${:04x} — {}", register.address, register.description)),
+                insert_text: Some(format!("${:04x}", register.address)),
+                ..CompletionItem::default()
+            });
+        }
+        if let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) {
+            for (name, value) in &assembly.symbols {
+                let is_label = assembly.symbol_definitions.get(name).is_some_and(|span| {
+                    text.lines().nth(span.line - 1).unwrap_or("").split(';').next().unwrap_or("").trim().ends_with(':')
+                });
+                items.push(CompletionItem {
+                    label: name.clone(),
+                    kind: Some(if is_label { CompletionItemKind::REFERENCE } else { CompletionItemKind::CONSTANT }),
+                    detail: Some(format!("${:04x}", value)),
+                    ..CompletionItem::default()
+                });
+            }
+        }
+        Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let mut symbols = Vec::new();
+        for (name, span) in &assembly.symbol_definitions {
+            let source_line = text.lines().nth(span.line - 1).unwrap_or("");
+            let code = source_line.split(';').next().unwrap_or("").trim();
+            let is_label = code.ends_with(':');
+            let range = Range {
+                start: Position::new((span.line - 1) as u32, (span.column_start - 1) as u32),
+                end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
+            };
+            symbols.push(DocumentSymbol {
+                name: name.clone(),
+                detail: assembly.symbols.get(name).map(|value| format!("${:04x}", value)),
+                kind: if is_label { SymbolKind::FUNCTION } else { SymbolKind::CONSTANT },
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            });
+        }
+        symbols.sort_by_key(|symbol| (symbol.range.start.line, symbol.range.start.character));
+        Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+    }
+
+    async fn prepare_rename(&self, params: TextDocumentPositionParams) -> Result<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri;
+        let position = params.position;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        if !assembly.symbol_definitions.contains_key(name) { return Ok(None); }
+        Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
+            range: Range {
+                start: Position::new(position.line, start as u32),
+                end: Position::new(position.line, end as u32),
+            },
+            placeholder: name.to_string(),
+        }))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let valid_new_name = {
+            let mut chars = params.new_name.chars();
+            chars.next().is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        };
+        if !valid_new_name { return Ok(None); }
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        if !assembly.symbol_definitions.contains_key(name) || assembly.symbols.contains_key(&params.new_name) {
+            return Ok(None);
+        }
+
+        let mut edits = Vec::new();
+        for (line_index, source_line) in text.lines().enumerate() {
+            let code = source_line.split(';').next().unwrap_or("");
+            let bytes = code.as_bytes();
+            let mut index = 0;
+            while index < bytes.len() {
+                let ch = bytes[index] as char;
+                if ch == '_' || ch.is_ascii_alphabetic() {
+                    let token_start = index;
+                    index += 1;
+                    while index < bytes.len() {
+                        let ch = bytes[index] as char;
+                        if ch == '_' || ch.is_ascii_alphanumeric() { index += 1; } else { break; }
+                    }
+                    if &code[token_start..index] == name {
+                        edits.push(TextEdit {
+                            range: Range {
+                                start: Position::new(line_index as u32, token_start as u32),
+                                end: Position::new(line_index as u32, index as u32),
+                            },
+                            new_text: params.new_name.clone(),
+                        });
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        let mut changes = HashMap::new();
+        changes.insert(uri, edits);
+        Ok(Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..WorkspaceEdit::default()
+        }))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let position = params.text_document_position.position;
+        let uri = params.text_document_position.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let Some(definition) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+
+        let mut locations = Vec::new();
+        for (line_index, source_line) in text.lines().enumerate() {
+            let code = source_line.split(';').next().unwrap_or("");
+            let bytes = code.as_bytes();
+            let mut index = 0;
+            while index < bytes.len() {
+                let ch = bytes[index] as char;
+                if ch == '_' || ch.is_ascii_alphabetic() {
+                    let token_start = index;
+                    index += 1;
+                    while index < bytes.len() {
+                        let ch = bytes[index] as char;
+                        if ch == '_' || ch.is_ascii_alphanumeric() { index += 1; } else { break; }
+                    }
+                    if &code[token_start..index] == name {
+                        let is_declaration = line_index + 1 == definition.line
+                            && token_start + 1 == definition.column_start;
+                        if params.context.include_declaration || !is_declaration {
+                            locations.push(Location {
+                                uri: uri.clone(),
+                                range: Range {
+                                    start: Position::new(line_index as u32, token_start as u32),
+                                    end: Position::new(line_index as u32, index as u32),
+                                },
+                            });
+                        }
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        Ok(Some(locations))
+    }
+
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let uri = params.text_document.uri;
+        let text = params.text_document.text;
+        self.documents.write().await.insert(uri.clone(), text.clone());
+        self.analyze(uri, &text).await;
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        if let Some(change) = params.content_changes.into_iter().last() {
+            let uri = params.text_document.uri;
+            self.documents.write().await.insert(uri.clone(), change.text.clone());
+            self.analyze(uri, &change.text).await;
+        }
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri;
+        self.documents.write().await.remove(&uri);
+        self.client.publish_diagnostics(uri, Vec::new(), None).await;
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+    let (service, socket) = LspService::new(|client| Backend {
+        client,
+        documents: RwLock::new(HashMap::new()),
+    });
+    Server::new(stdin, stdout, socket).serve(service).await;
+}
+ { token_start -= 1; }
+            let mut token_end = byte.min(bytes.len());
+            while token_end < bytes.len() && (bytes[token_end] as char).is_ascii_hexdigit() { token_end += 1; }
+            &line[token_start..token_end]
+        };
+        if let Some(hex) = address_token.strip_prefix('
+        let Some(span) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+        let kind = if text.lines().nth(span.line - 1).unwrap_or("").split(';').next().unwrap_or("").trim().ends_with(':') {
+            "Label"
+        } else {
+            "Constant"
+        };
+        let value = format!(
+            "**{}** — {}  \\nValue: `${:04x}` / {}  \\nDefined: line {}",
+            name, kind, value, value, span.line
+        );
+        Ok(Some(Hover {
+            contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
+            range: Some(Range {
+                start: Position::new(position.line, start as u32),
+                end: Position::new(position.line, end as u32),
+            }),
+        }))
+    }
+
+    async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
+        let position = params.text_document_position_params.position;
+        let uri = params.text_document_position_params.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let Some(span) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+        Ok(Some(GotoDefinitionResponse::Scalar(Location {
+            uri,
+            range: Range {
+                start: Position::new((span.line - 1) as u32, (span.column_start - 1) as u32),
+                end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
+            },
+        })))
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let mut items = Vec::new();
+        let mut mnemonics = std::collections::BTreeSet::new();
+        for opcode in sceneasm_core::OPCODES {
+            if mnemonics.insert(opcode.mnemonic) {
+                items.push(CompletionItem {
+                    label: opcode.mnemonic.to_ascii_lowercase(),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    detail: Some("MOS 6502/6510 instruction".into()),
+                    ..CompletionItem::default()
+                });
+            }
+        }
+        for directive in [
+            ".org", ".byte", ".text", ".assert", ".assert_cycles", ".raster",
+            ".undocumented", ".vic_display", ".vic_yscroll", ".vic_sprites", ".vic_sprite_y",
+        ] {
+            items.push(CompletionItem {
+                label: directive.into(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("SceneASM directive".into()),
+                ..CompletionItem::default()
+            });
+        }
+        for register in sceneasm_core::c64_registers::VIC_REGISTERS {
+            items.push(CompletionItem {
+                label: register.name.into(),
+                kind: Some(CompletionItemKind::VALUE),
+                detail: Some(format!("${:04x} — {}", register.address, register.description)),
+                insert_text: Some(format!("${:04x}", register.address)),
+                ..CompletionItem::default()
+            });
+        }
+        if let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) {
+            for (name, value) in &assembly.symbols {
+                let is_label = assembly.symbol_definitions.get(name).is_some_and(|span| {
+                    text.lines().nth(span.line - 1).unwrap_or("").split(';').next().unwrap_or("").trim().ends_with(':')
+                });
+                items.push(CompletionItem {
+                    label: name.clone(),
+                    kind: Some(if is_label { CompletionItemKind::REFERENCE } else { CompletionItemKind::CONSTANT }),
+                    detail: Some(format!("${:04x}", value)),
+                    ..CompletionItem::default()
+                });
+            }
+        }
+        Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let mut symbols = Vec::new();
+        for (name, span) in &assembly.symbol_definitions {
+            let source_line = text.lines().nth(span.line - 1).unwrap_or("");
+            let code = source_line.split(';').next().unwrap_or("").trim();
+            let is_label = code.ends_with(':');
+            let range = Range {
+                start: Position::new((span.line - 1) as u32, (span.column_start - 1) as u32),
+                end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
+            };
+            symbols.push(DocumentSymbol {
+                name: name.clone(),
+                detail: assembly.symbols.get(name).map(|value| format!("${:04x}", value)),
+                kind: if is_label { SymbolKind::FUNCTION } else { SymbolKind::CONSTANT },
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            });
+        }
+        symbols.sort_by_key(|symbol| (symbol.range.start.line, symbol.range.start.character));
+        Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+    }
+
+    async fn prepare_rename(&self, params: TextDocumentPositionParams) -> Result<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri;
+        let position = params.position;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        if !assembly.symbol_definitions.contains_key(name) { return Ok(None); }
+        Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
+            range: Range {
+                start: Position::new(position.line, start as u32),
+                end: Position::new(position.line, end as u32),
+            },
+            placeholder: name.to_string(),
+        }))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let valid_new_name = {
+            let mut chars = params.new_name.chars();
+            chars.next().is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        };
+        if !valid_new_name { return Ok(None); }
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        if !assembly.symbol_definitions.contains_key(name) || assembly.symbols.contains_key(&params.new_name) {
+            return Ok(None);
+        }
+
+        let mut edits = Vec::new();
+        for (line_index, source_line) in text.lines().enumerate() {
+            let code = source_line.split(';').next().unwrap_or("");
+            let bytes = code.as_bytes();
+            let mut index = 0;
+            while index < bytes.len() {
+                let ch = bytes[index] as char;
+                if ch == '_' || ch.is_ascii_alphabetic() {
+                    let token_start = index;
+                    index += 1;
+                    while index < bytes.len() {
+                        let ch = bytes[index] as char;
+                        if ch == '_' || ch.is_ascii_alphanumeric() { index += 1; } else { break; }
+                    }
+                    if &code[token_start..index] == name {
+                        edits.push(TextEdit {
+                            range: Range {
+                                start: Position::new(line_index as u32, token_start as u32),
+                                end: Position::new(line_index as u32, index as u32),
+                            },
+                            new_text: params.new_name.clone(),
+                        });
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        let mut changes = HashMap::new();
+        changes.insert(uri, edits);
+        Ok(Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..WorkspaceEdit::default()
+        }))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let position = params.text_document_position.position;
+        let uri = params.text_document_position.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let line = text.lines().nth(position.line as usize).unwrap_or("");
+        let byte = position.character as usize;
+        let is_symbol = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+        let start = line[..byte.min(line.len())].rfind(|ch: char| !is_symbol(ch)).map_or(0, |i| i + 1);
+        let end = line[byte.min(line.len())..].find(|ch: char| !is_symbol(ch)).map_or(line.len(), |i| byte.min(line.len()) + i);
+        let name = &line[start..end];
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let Some(definition) = assembly.symbol_definitions.get(name) else { return Ok(None); };
+
+        let mut locations = Vec::new();
+        for (line_index, source_line) in text.lines().enumerate() {
+            let code = source_line.split(';').next().unwrap_or("");
+            let bytes = code.as_bytes();
+            let mut index = 0;
+            while index < bytes.len() {
+                let ch = bytes[index] as char;
+                if ch == '_' || ch.is_ascii_alphabetic() {
+                    let token_start = index;
+                    index += 1;
+                    while index < bytes.len() {
+                        let ch = bytes[index] as char;
+                        if ch == '_' || ch.is_ascii_alphanumeric() { index += 1; } else { break; }
+                    }
+                    if &code[token_start..index] == name {
+                        let is_declaration = line_index + 1 == definition.line
+                            && token_start + 1 == definition.column_start;
+                        if params.context.include_declaration || !is_declaration {
+                            locations.push(Location {
+                                uri: uri.clone(),
+                                range: Range {
+                                    start: Position::new(line_index as u32, token_start as u32),
+                                    end: Position::new(line_index as u32, index as u32),
+                                },
+                            });
+                        }
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        Ok(Some(locations))
+    }
+
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let uri = params.text_document.uri;
+        let text = params.text_document.text;
+        self.documents.write().await.insert(uri.clone(), text.clone());
+        self.analyze(uri, &text).await;
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        if let Some(change) = params.content_changes.into_iter().last() {
+            let uri = params.text_document.uri;
+            self.documents.write().await.insert(uri.clone(), change.text.clone());
+            self.analyze(uri, &change.text).await;
+        }
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri;
+        self.documents.write().await.remove(&uri);
+        self.client.publish_diagnostics(uri, Vec::new(), None).await;
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+    let (service, socket) = LspService::new(|client| Backend {
+        client,
+        documents: RwLock::new(HashMap::new()),
+    });
+    Server::new(stdin, stdout, socket).serve(service).await;
+}
+) {
+            if let Ok(address) = u16::from_str_radix(hex, 16) {
+                if let Some(register) = sceneasm_core::c64_registers::register_by_address(address) {
+                    let value = format!(
+                        "**{}** — VIC-II register  \\nAddress: `${:04x}`  \\n{}",
+                        register.name, register.address, register.description
+                    );
+                    return Ok(Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }),
+                        range: None,
+                    }));
+                }
+            }
+        }
+
         let Some(value) = assembly.symbols.get(name) else { return Ok(None); };
         let Some(span) = assembly.symbol_definitions.get(name) else { return Ok(None); };
         let kind = if text.lines().nth(span.line - 1).unwrap_or("").split(';').next().unwrap_or("").trim().ends_with(':') {
