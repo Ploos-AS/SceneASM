@@ -621,13 +621,10 @@ pub fn assemble_with_policy(
             }
             ("STA", _) => {}
             (
-                "ADC" | "AND" | "ASL" | "EOR" | "LAX" | "LDA" | "LSR" | "ORA" | "PLA"
-                | "ROL" | "ROR" | "SBC" | "TXA" | "TYA",
+                "ADC" | "AND" | "ASL" | "EOR" | "LAX" | "LDA" | "LSR" | "ORA" | "PLA" | "ROL"
+                | "ROR" | "SBC" | "TXA" | "TYA",
                 _,
-            ) =>
-            {
-                known_a = None
-            }
+            ) => known_a = None,
             _ => {}
         }
     }
