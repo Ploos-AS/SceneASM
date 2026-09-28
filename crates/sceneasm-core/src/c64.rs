@@ -81,7 +81,7 @@ impl BusMap {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduledInstruction {
     pub address: u16,
     pub source: crate::SourceSpan,
