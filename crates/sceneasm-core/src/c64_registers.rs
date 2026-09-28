@@ -13,6 +13,12 @@ pub struct RegisterBitField {
     pub description: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecodedBitField {
+    pub field: RegisterBitField,
+    pub value: u8,
+}
+
 pub const VIC_REGISTERS: &[HardwareRegister] = &[
     HardwareRegister { name: "VIC_SPR0_X", address: 0xd000, description: "Sprite 0 X position" },
     HardwareRegister { name: "VIC_SPR0_Y", address: 0xd001, description: "Sprite 0 Y position" },
@@ -121,6 +127,24 @@ pub fn bit_fields(address: u16) -> impl Iterator<Item = RegisterBitField> {
     BIT_FIELDS.iter().copied().filter(move |field| field.register == address)
 }
 
+fn bit_range(bits: &str) -> Option<(u8, u8)> {
+    if let Some((high, low)) = bits.split_once('-') {
+        Some((high.parse().ok()?, low.parse().ok()?))
+    } else {
+        let bit = bits.parse().ok()?;
+        Some((bit, bit))
+    }
+}
+
+pub fn decode_value(address: u16, value: u8) -> impl Iterator<Item = DecodedBitField> {
+    bit_fields(address).filter_map(move |field| {
+        let (high, low) = bit_range(field.bits)?;
+        let width = high.checked_sub(low)? + 1;
+        let mask = if width >= 8 { u8::MAX } else { ((1u16 << width) - 1) as u8 };
+        Some(DecodedBitField { field, value: (value >> low) & mask })
+    })
+}
+
 pub fn registers() -> impl Iterator<Item = HardwareRegister> {
     VIC_REGISTERS.iter()
         .chain(SID_REGISTERS)
@@ -145,5 +169,14 @@ mod tests {
     fn raster_register_is_available_by_name_and_address() {
         assert_eq!(register_by_name("vic_raster").unwrap().address, 0xd012);
         assert_eq!(register_by_address(0xd012).unwrap().name, "VIC_RASTER");
+    }
+
+    #[test]
+    fn decodes_vic_control_value() {
+        let fields: Vec<_> = decode_value(0xd011, 0x1b).collect();
+        assert_eq!(fields.iter().find(|f| f.field.name == "DEN").unwrap().value, 1);
+        assert_eq!(fields.iter().find(|f| f.field.name == "RSEL").unwrap().value, 1);
+        assert_eq!(fields.iter().find(|f| f.field.name == "YSCROLL").unwrap().value, 3);
+        assert_eq!(fields.iter().find(|f| f.field.name == "BMM").unwrap().value, 0);
     }
 }
