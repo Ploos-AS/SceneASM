@@ -318,10 +318,14 @@ mod tests {
     #[test]
     fn sprite_dma_follows_y_window() {
         let timing = C64Timing::pal();
-        let mut state = VicState::default();
-        state.display_enabled = false;
-        state.sprite_enable_mask = 1;
-        state.sprite_y[0] = 100;
+        let mut sprite_y = [0; 8];
+        sprite_y[0] = 100;
+        let state = VicState {
+            display_enabled: false,
+            sprite_enable_mask: 1,
+            sprite_y,
+            ..VicState::default()
+        };
         assert_eq!(timing.vic_line(99, state).unwrap().active_sprites, 0);
         assert_eq!(timing.vic_line(100, state).unwrap().active_sprites, 1);
         assert_eq!(timing.vic_line(120, state).unwrap().active_sprites, 1);
