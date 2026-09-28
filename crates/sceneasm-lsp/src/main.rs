@@ -524,6 +524,7 @@ impl LanguageServer for Backend {
                 start: Position::new((span.line - 1) as u32, (span.column_start - 1) as u32),
                 end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
             };
+            #[allow(deprecated)]
             symbols.push(DocumentSymbol {
                 name: name.clone(),
                 detail: assembly
@@ -536,6 +537,7 @@ impl LanguageServer for Backend {
                     SymbolKind::CONSTANT
                 },
                 tags: None,
+                deprecated: None,
                 range,
                 selection_range: range,
                 children: None,
