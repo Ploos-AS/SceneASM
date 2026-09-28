@@ -240,10 +240,33 @@ impl LanguageServer for Backend {
             };
             let base = instruction.opcode.cycles as u16;
             let worst = base + extra;
-            let label = if worst == base {
+            let mut label = if worst == base {
                 format!("{}c", base)
             } else {
                 format!("{}–{}c", base, worst)
+            };
+            let raster_slot = assembly.raster_contracts.iter().find_map(|contract| {
+                contract.schedule.iter().find(|scheduled| {
+                    scheduled.address == instruction.address
+                        && scheduled.source.line == instruction.source.line
+                }).map(|scheduled| (contract.line, scheduled))
+            });
+            let timing_tooltip = if let Some((raster_line, scheduled)) = raster_slot {
+                label.push_str(&format!(" · r{} c{}", raster_line, scheduled.start_cycle));
+                format!(
+                    "{} {:?} timing; raster {} cycle {}–{}, {} VIC-II stall cycle(s)",
+                    instruction.opcode.mnemonic,
+                    instruction.opcode.mode,
+                    raster_line,
+                    scheduled.start_cycle,
+                    scheduled.end_cycle,
+                    scheduled.stalled_cycles
+                )
+            } else {
+                format!(
+                    "{} {:?} timing",
+                    instruction.opcode.mnemonic, instruction.opcode.mode
+                )
             };
             hints.push(InlayHint {
                 position: Position::new(
@@ -253,10 +276,7 @@ impl LanguageServer for Backend {
                 label: InlayHintLabel::String(label),
                 kind: Some(InlayHintKind::PARAMETER),
                 text_edits: None,
-                tooltip: Some(InlayHintTooltip::String(format!(
-                    "{} {:?} timing",
-                    instruction.opcode.mnemonic, instruction.opcode.mode
-                ))),
+                tooltip: Some(InlayHintTooltip::String(timing_tooltip)),
                 padding_left: Some(true),
                 padding_right: Some(false),
                 data: None,
