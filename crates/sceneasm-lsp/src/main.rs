@@ -67,6 +67,7 @@ impl LanguageServer for Backend {
                 rename_provider: Some(OneOf::Right(RenameOptions { prepare_provider: Some(true), work_done_progress_options: WorkDoneProgressOptions::default() })),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions::default()),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -216,6 +217,38 @@ impl LanguageServer for Backend {
                 end: Position::new((span.line - 1) as u32, (span.column_end - 1) as u32),
             },
         })))
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri;
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
+        let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
+        let mut hints = Vec::new();
+        for write in &assembly.hardware_writes {
+            let line_index = write.source.line.saturating_sub(1) as u32;
+            if line_index < params.range.start.line || line_index > params.range.end.line {
+                continue;
+            }
+            let source_line = text.lines().nth(line_index as usize).unwrap_or("");
+            hints.push(InlayHint {
+                position: Position::new(line_index, source_line.len() as u32),
+                label: InlayHintLabel::String(format!(
+                    "  {} = ${:02x}",
+                    write.register.name, write.value
+                )),
+                kind: Some(InlayHintKind::TYPE),
+                text_edits: None,
+                tooltip: Some(InlayHintTooltip::String(write.register.description.into())),
+                padding_left: Some(true),
+                padding_right: Some(false),
+                data: None,
+            });
+        }
+        Ok(Some(hints))
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
