@@ -325,9 +325,30 @@ pub fn assemble_with_policy(source: &str, target: Target, mut undocumented_polic
             max_cycles: range.max,
         };
         if !contract.fits() {
-            return Err(AssembleError::RasterBudgetExceeded {
-                source_line, raster_line, actual: range.max, budget: vic.cpu_available_cycles,
-            });
+            let raw_line = source.lines().nth(source_line - 1).unwrap_or("");
+            let column_start = raw_line.len().saturating_sub(raw_line.trim_start().len()) + 1;
+            diagnostics.push(
+                diagnostic::Diagnostic::error(
+                    "C64_RASTER_BUDGET",
+                    format!(
+                        "raster {} requires up to {} CPU cycles but only {} are available",
+                        raster_line, range.max, vic.cpu_available_cycles
+                    ),
+                )
+                .with_primary(
+                    SourceSpan {
+                        file_id: 0,
+                        line: source_line,
+                        column_start,
+                        column_end: raw_line.len() + 1,
+                    },
+                    "raster timing contract is exceeded",
+                )
+                .with_note(format!(
+                    "{} VIC-II cycles are unavailable on this raster line",
+                    vic.vic_stolen_cycles
+                )),
+            );
         }
         raster_contracts.push(contract);
     }
@@ -444,6 +465,18 @@ mod tests {
         assert_eq!(out.raster_contracts[0].min_cycles, 8);
         assert_eq!(out.raster_contracts[0].max_cycles, 8);
         assert!(out.raster_contracts[0].fits());
+    }
+
+    #[test]
+    fn raster_budget_violation_is_structured_error() {
+        let mut source = ".vic_display on\n.vic_yscroll 0\n.raster 48 {\n".to_string();
+        for _ in 0..12 { source.push_str("rts\n"); }
+        source.push_str("}\n");
+        let out = assemble(&source, Target::c64()).unwrap();
+        let diagnostic = out.diagnostics.iter().find(|d| d.code == "C64_RASTER_BUDGET").unwrap();
+        assert_eq!(diagnostic.severity, diagnostic::Severity::Error);
+        assert_eq!(diagnostic.primary.as_ref().unwrap().span.line, 3);
+        assert!(!out.raster_contracts[0].fits());
     }
 
     #[test]
