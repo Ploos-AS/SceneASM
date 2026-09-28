@@ -1,7 +1,8 @@
 use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use serde::Serialize;
 use sceneasm_core::{assemble, render, Assembly, Target};
 
 #[derive(Debug, Parser)]
@@ -12,6 +13,27 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DiagnosticFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonDiagnostic<'a> {
+    code: &'a str,
+    severity: &'static str,
+    message: &'a str,
+    file: Option<&'a str>,
+    line: Option<usize>,
+    column_start: Option<usize>,
+    column_end: Option<usize>,
+    raster_line: Option<u16>,
+    nominal_cycles: Option<u16>,
+    stalled_cycles: Option<u16>,
+    actual_cycles: Option<u16>,
+}
+
 enum Command {
     Build {
         input: PathBuf,
@@ -27,6 +49,8 @@ enum Command {
         input: PathBuf,
         #[arg(long, default_value = "c64")]
         target: String,
+        #[arg(long, value_enum, default_value = "text")]
+        diagnostic_format: DiagnosticFormat,
     },
 }
 
@@ -68,12 +92,15 @@ fn main() -> Result<()> {
                 output.display()
             );
         }
-        Command::Check { input, target } => {
+        Command::Check { input, target, diagnostic_format } => {
             let target = parse_target(&target)?;
             let source = fs::read_to_string(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
             let assembly = assemble(&source, target)?;
-            print_diagnostics(&assembly);
+            match diagnostic_format {
+                DiagnosticFormat::Text => print_diagnostics(&assembly),
+                DiagnosticFormat::Json => print_json_diagnostics(&assembly)?,
+            }
             if assembly.has_errors() {
                 anyhow::bail!("check failed: {} error diagnostic(s)", assembly.errors().count());
             }
@@ -99,4 +126,31 @@ fn print_diagnostics(assembly: &Assembly) {
     for diagnostic in &assembly.diagnostics {
         eprintln!("{}", render::render(diagnostic, &assembly.source_map));
     }
+}
+
+fn print_json_diagnostics(assembly: &Assembly) -> Result<()> {
+    let diagnostics: Vec<_> = assembly.diagnostics.iter().map(|diagnostic| {
+        let primary = diagnostic.primary.as_ref();
+        let timing = diagnostic.timing.as_ref();
+        JsonDiagnostic {
+            code: diagnostic.code,
+            severity: match diagnostic.severity {
+                sceneasm_core::diagnostic::Severity::Error => "error",
+                sceneasm_core::diagnostic::Severity::Warning => "warning",
+                sceneasm_core::diagnostic::Severity::Info => "info",
+                sceneasm_core::diagnostic::Severity::Hint => "hint",
+            },
+            message: &diagnostic.message,
+            file: primary.and_then(|label| assembly.source_map.file(label.span.file_id)).map(|file| file.name.as_str()),
+            line: primary.map(|label| label.span.line),
+            column_start: primary.map(|label| label.span.column_start),
+            column_end: primary.map(|label| label.span.column_end),
+            raster_line: timing.map(|timing| timing.raster_line),
+            nominal_cycles: timing.map(|timing| timing.nominal_cycles),
+            stalled_cycles: timing.map(|timing| timing.stalled_cycles),
+            actual_cycles: timing.map(|timing| timing.actual_cycles),
+        }
+    }).collect();
+    println!("{}", serde_json::to_string_pretty(&diagnostics)?);
+    Ok(())
 }
