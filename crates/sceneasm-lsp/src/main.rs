@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 struct Backend {
     client: Client,
+    documents: RwLock<HashMap<Url, String>>,
 }
 
 impl Backend {
@@ -79,8 +82,11 @@ impl LanguageServer for Backend {
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let position = params.text_document_position_params.position;
         let uri = params.text_document_position_params.text_document.uri;
-        let Ok(path) = uri.to_file_path() else { return Ok(None); };
-        let Ok(text) = std::fs::read_to_string(path) else { return Ok(None); };
+        let text = {
+            let documents = self.documents.read().await;
+            let Some(text) = documents.get(&uri) else { return Ok(None); };
+            text.clone()
+        };
         let Ok(assembly) = sceneasm_core::assemble(&text, sceneasm_core::Target::c64()) else { return Ok(None); };
         let line = position.line as usize + 1;
         let Some(instruction) = assembly.instructions.iter().find(|instruction| {
@@ -110,13 +116,24 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.analyze(params.text_document.uri, &params.text_document.text).await;
+        let uri = params.text_document.uri;
+        let text = params.text_document.text;
+        self.documents.write().await.insert(uri.clone(), text.clone());
+        self.analyze(uri, &text).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.into_iter().last() {
-            self.analyze(params.text_document.uri, &change.text).await;
+            let uri = params.text_document.uri;
+            self.documents.write().await.insert(uri.clone(), change.text.clone());
+            self.analyze(uri, &change.text).await;
         }
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri;
+        self.documents.write().await.remove(&uri);
+        self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 }
 
@@ -124,6 +141,9 @@ impl LanguageServer for Backend {
 async fn main() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    let (service, socket) = LspService::new(|client| Backend { client });
+    let (service, socket) = LspService::new(|client| Backend {
+        client,
+        documents: RwLock::new(HashMap::new()),
+    });
     Server::new(stdin, stdout, socket).serve(service).await;
 }
