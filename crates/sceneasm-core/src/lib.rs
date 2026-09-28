@@ -4,11 +4,12 @@ use thiserror::Error;
 
 pub mod c64;
 pub mod c64_registers;
-mod diagnostic;
+pub mod diagnostic;
+pub mod render;
 pub mod expr;
 pub mod layout;
 pub mod opcodes;
-mod source;
+pub mod source;
 pub mod timing;
 pub use opcodes::{
     opcode, opcode_by_byte, opcode_with_policy, AddressingMode, ExtraCycle, Opcode, OpcodeClass,
@@ -679,6 +680,7 @@ mod tests {
         assert!(assembly.hardware_writes.is_empty());
     }
 
+    #[test]
     fn assembly_exposes_diagnostic_severity_views() {
         let failed =
             assemble("lda $1234,x\nbne $10\n.assert_cycles <= 8\n", Target::c64()).unwrap();
