@@ -41,7 +41,7 @@ pub fn eval_at(
         line,
         pc,
     };
-    let value = parser.expr()?;
+    let value = parser.comparison()?;
     if parser.pos != tokens.len() {
         return Err(AssembleError::InvalidExpression {
             line,
@@ -58,6 +58,10 @@ fn lex(text: &str, line: usize) -> Result<Vec<Token>, AssembleError> {
     while i < chars.len() {
         match chars[i] {
             c if c.is_whitespace() => i += 1,
+            '*' => {
+                out.push(Token::CurrentPc);
+                i += 1;
+            }
             '+' => {
                 out.push(Token::Plus);
                 i += 1;
